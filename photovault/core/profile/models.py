@@ -39,3 +39,5 @@ class Thresholds(BaseModel):
     keep_rating: int = 3
     reject_rating: int = 1
     burst_gap_seconds: float = 2.0
+    # Learned L3 pixel thresholds (M2). Optional so M1 profiles validate.
+    sharpness_floor: float | None = None

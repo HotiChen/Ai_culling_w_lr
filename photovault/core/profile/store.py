@@ -16,9 +16,13 @@ Layout (see ARCHITECTURE.md §3)::
 from __future__ import annotations
 
 import json
+import pickle
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+import numpy as np
 
 from photovault.core.catalog.style import Preset
 from photovault.core.profile.models import ProfileMeta, Thresholds
@@ -43,6 +47,9 @@ class LoadedProfile:
     thresholds: Thresholds
     preset_files: list[Path]
     profile_md: str | None
+    # M2 artifacts; None for M1 profiles that predate them.
+    taste_vector: np.ndarray | None = None
+    classifier: Any | None = None
 
 
 def profile_exists(profiles_dir: Path, name: str) -> bool:
@@ -58,6 +65,8 @@ def save_profile(
     signature: Preset | None = None,
     profile_md: str | None = None,
     labels_csv: Path | None = None,
+    taste_vector: np.ndarray | None = None,
+    classifier: Any | None = None,
     overwrite: bool = True,
 ) -> Path:
     """Write the full profile bundle. Returns the profile directory."""
@@ -86,6 +95,15 @@ def save_profile(
     md = profile_md or _placeholder_profile_md(name, meta)
     (base / PROFILE_LAYOUT["profile_md"]).write_text(md, encoding="utf-8")
 
+    # M2: L3 pixel artifacts. The chroma/ dir is always created so the vector
+    # store has a stable home even when no embeddings were computed.
+    if taste_vector is not None:
+        np.save(base / PROFILE_LAYOUT["taste_vector"], np.asarray(taste_vector))
+    if classifier is not None:
+        with (base / PROFILE_LAYOUT["classifier"]).open("wb") as fh:
+            pickle.dump(classifier, fh)
+    (base / PROFILE_LAYOUT["chroma_dir"]).mkdir(exist_ok=True)
+
     return base
 
 
@@ -106,6 +124,16 @@ def load_profile(profiles_dir: Path, name: str) -> LoadedProfile:
     md_path = base / PROFILE_LAYOUT["profile_md"]
     profile_md = md_path.read_text(encoding="utf-8") if md_path.exists() else None
 
+    # M2 artifacts are optional (M1 profiles omit them).
+    taste_path = base / PROFILE_LAYOUT["taste_vector"]
+    taste_vector = np.load(taste_path) if taste_path.exists() else None
+
+    clf_path = base / PROFILE_LAYOUT["classifier"]
+    classifier = None
+    if clf_path.exists():
+        with clf_path.open("rb") as fh:
+            classifier = pickle.load(fh)
+
     return LoadedProfile(
         name=name,
         path=base,
@@ -113,6 +141,8 @@ def load_profile(profiles_dir: Path, name: str) -> LoadedProfile:
         thresholds=thresholds,
         preset_files=preset_files,
         profile_md=profile_md,
+        taste_vector=taste_vector,
+        classifier=classifier,
     )
 
 

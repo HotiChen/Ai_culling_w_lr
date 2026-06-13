@@ -23,7 +23,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# M2: preview extraction + pixel features + CLIP embeddings + vector store.
+# M2 (light): preview carve + sharpness + pHash + EXIF + classifier. These are
+# pure-Python / CPU-light and install anywhere, so their tests run for real.
+pixels-lite = [
+    "Pillow>=10.0",
+    "opencv-python>=4.9",
+    "imagehash>=4.3",
+    "scikit-learn>=1.4",
+]
+# M2 (full): adds the heavy, Apple-Silicon-oriented deps for CLIP embeddings,
+# face/blink detection, RAW decode and the persistent vector store. All are
+# imported lazily so the codebase still runs without them (tests use fakes).
 pixels = [
     "rawpy>=0.21",
     "Pillow>=10.0",
