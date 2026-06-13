@@ -15,7 +15,7 @@ from photovault.settings import LLMSettings
 
 def test_default_model_is_gemma():
     cfg = LLMSettings()
-    assert cfg.model == "gemma3:12b"
+    assert cfg.model == "gemma4:12b"
 
 
 def test_build_profile_prompt_contains_stats():

@@ -3,7 +3,7 @@
 All knobs are overridable through environment variables prefixed with
 ``PHOTOVAULT_`` or a ``.env`` file. Example::
 
-    PHOTOVAULT_LLM__MODEL=gemma3:12b
+    PHOTOVAULT_LLM__MODEL=gemma4:12b
     PHOTOVAULT_PROFILES_DIR=~/.photovault/profiles
 """
 
@@ -68,14 +68,15 @@ class LLMSettings(BaseModel):
       * stage A — write the human-readable taste rule-book (``profile.md``)
       * stage B — arbitrate only the gray-zone shots by actually looking at them
 
-    Gemma 3 12B is multimodal (text + vision), so one model covers what the
+    Gemma 4 12B is multimodal (text + vision), so one model covers what the
     original design split across a text model and a separate vision model.
+    On Apple Silicon, ``gemma4:12b-mlx`` is a faster MLX-backed variant.
     """
 
     enabled: bool = True
     host: str = "http://localhost:11434"
     # Single multimodal model for text + vision.
-    model: str = "gemma3:12b"
+    model: str = "gemma4:12b"
     request_timeout_s: float = 120.0
     # Deterministic-ish output for reproducible rule-books / verdicts.
     temperature: float = 0.2

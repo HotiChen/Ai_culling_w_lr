@@ -45,7 +45,7 @@
 |語意/美感 embedding|`open-clip-torch`，**PyTorch MPS** backend    |可選 `mlx-clip` 更快                              |
 |向量庫            |`chromadb`（本地持久化）                            |存 keeper embeddings                           |
 |表格學習器          |`scikit-learn`（LogReg / GBDT）                |學 metadata 決策邊界                               |
-|**本地 LLM**     |**Ollama**（Metal 加速）                         |**單一多模態 `gemma3:12b`**（文字＋視覺共用）|
+|**本地 LLM**     |**Ollama** 或 **llama.cpp**（Metal 加速）         |**單一多模態 `gemma4:12b`**（文字＋視覺共用）|
 |設定/驗證          |`pydantic-settings`                          |                                              |
 |CLI            |`typer`                                      |階段一介面                                         |
 |Web UI（可選）     |`FastAPI` + 簡易前端                             |你熟的 stack，M5 再做                               |
@@ -59,10 +59,12 @@
 
 ## 2. 本地 LLM 的角色（關鍵設計）
 
-> **模型選擇：單一多模態 Gemma 12B（`gemma3:12b`）。**
-> Gemma 3 的 12B 版本本身具備視覺能力，**同一個模型**就能同時做文字推理與看圖判斷，
+> **模型選擇：單一多模態 Gemma 4 12B（`gemma4:12b`）。**
+> Gemma 4 的 12B 版本本身具備視覺能力，**同一個模型**就能同時做文字推理與看圖判斷，
 > 因此不再需要原本「文字模型 + 視覺模型」兩支的設計。可用
-> `PHOTOVAULT_LLM__MODEL` 覆寫成其他 Ollama tag。
+> `PHOTOVAULT_LLM__MODEL` 覆寫成其他 tag（Apple Silicon 可用 `gemma4:12b-mlx`）。
+> 部署可選 **Ollama**（`/api/generate`，預設）或 **llama.cpp** server
+> （OpenAI 相容 `/v1/chat/completions`，支援 QAT + MTP 加速、mmproj 多模態）。
 
 LLM **不**逐張看圖（太慢，M2 上跑視覺模型一張要數秒）。它只做兩件「判斷」：
 

@@ -27,21 +27,24 @@ pip install -e ".[dev]"     # pytest
 
 ## LLM：單一多模態 Gemma
 
-本專案用**一個多模態 Gemma 模型**（預設 `gemma3:12b`，透過 Ollama / Metal 加速）
+本專案用**一個多模態 Gemma 4 模型**（預設 `gemma4:12b`，透過 Ollama / Metal 加速）
 同時負責兩件事，不再需要分文字模型 + 視覺模型：
 
 - **階段 A**：讀 L1/L2/L3 統計 → 生成人類看得懂的品味規則書 `profile.md`
 - **階段 B**：只對「灰色地帶」那一疊看圖仲裁 keep/reject + 一句理由
 
-沒有 Ollama 也能跑：管線會自動退回純 CV+CLIP baseline 並寫入 placeholder `profile.md`。
+沒有 LLM 也能跑：管線會自動退回純 CV+CLIP baseline 並寫入 placeholder `profile.md`。
 
 ```bash
 # 先在本機跑起 Ollama 並抓模型
-ollama pull gemma3:12b
+ollama pull gemma4:12b
+# Apple Silicon 可改用 MLX 變體加速：ollama pull gemma4:12b-mlx
 # 覆寫預設（可選）
-export PHOTOVAULT_LLM__MODEL=gemma3:12b
+export PHOTOVAULT_LLM__MODEL=gemma4:12b
 export PHOTOVAULT_LLM__HOST=http://localhost:11434
 ```
+
+> 也可用 **llama.cpp**（OpenAI 相容 API）搭配 Gemma 4 12B QAT + MTP 加速本地部署 —— 見下方「llama.cpp 後端」。
 
 ## 使用
 

@@ -1,7 +1,7 @@
 """Ollama client wrapping a single multimodal Gemma model.
 
 Design (ARCHITECTURE.md §2): the LLM is a *pluggable, explainable arbiter*,
-never a per-image bottleneck. One Gemma 3 12B model does both jobs because it
+never a per-image bottleneck. One Gemma 4 12B model does both jobs because it
 is multimodal:
 
   * stage A — :meth:`write_profile` turns L1/L2/L3 stats into ``profile.md``
