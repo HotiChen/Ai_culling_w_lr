@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -71,15 +71,31 @@ class LLMSettings(BaseModel):
     Gemma 4 12B is multimodal (text + vision), so one model covers what the
     original design split across a text model and a separate vision model.
     On Apple Silicon, ``gemma4:12b-mlx`` is a faster MLX-backed variant.
+
+    Two server backends are supported:
+      * ``ollama``   — Ollama's ``/api/generate`` (default host port 11434)
+      * ``llamacpp`` — a llama.cpp server's OpenAI-compatible
+        ``/v1/chat/completions`` (e.g. Gemma 4 12B QAT + MTP at port 8085).
+        Set ``host`` to the server, e.g. ``http://127.0.0.1:8085``.
     """
 
     enabled: bool = True
+    # "ollama" or "llamacpp" (OpenAI-compatible).
+    backend: str = "ollama"
     host: str = "http://localhost:11434"
     # Single multimodal model for text + vision.
     model: str = "gemma4:12b"
     request_timeout_s: float = 120.0
     # Deterministic-ish output for reproducible rule-books / verdicts.
     temperature: float = 0.2
+
+    @field_validator("backend")
+    @classmethod
+    def _check_backend(cls, v: str) -> str:
+        allowed = {"ollama", "llamacpp"}
+        if v not in allowed:
+            raise ValueError(f"backend must be one of {sorted(allowed)}, got {v!r}")
+        return v
 
 
 class Settings(BaseSettings):
