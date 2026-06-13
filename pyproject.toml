@@ -45,9 +45,9 @@ pixels = [
     "chromadb>=0.4",
     "scikit-learn>=1.4",
 ]
-# M5: optional web UI.
-web = ["fastapi>=0.110", "uvicorn>=0.29"]
-dev = ["pytest>=8.0"]
+# M5: optional web UI. Pillow renders /api/thumb thumbnails (lazy import).
+web = ["fastapi>=0.110", "uvicorn>=0.29", "Pillow>=10.0"]
+dev = ["pytest>=8.0", "httpx>=0.27"]
 
 [project.scripts]
 photovault = "photovault.cli.main:app"

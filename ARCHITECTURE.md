@@ -114,8 +114,8 @@ photovault/
 │   ├── score/          # 階段 B 評分 + 連拍去重 + keep/maybe/reject 分流（M3）
 │   ├── judge/          # Ollama Gemma client：profile.md 生成 + 視覺仲裁
 │   └── export/         # XMP sidecar 寫入 / 資料夾分流 / HTML 報告（M3）
-├── cli/                # typer：photovault learn | inspect | apply
-├── api/                # FastAPI（M5 可選）
+├── cli/                # typer：photovault learn | inspect | apply | serve
+├── api/                # FastAPI（M5）：app.py（factory）+ mappers.py（純）+ static/（React SPA）
 └── tests/              # 每模組對應 test_*.py，合成 .lrcat fixture（make_fake.py）
 ```
 
@@ -158,7 +158,7 @@ photovault/
 |**M2**|預覽抽取 + 像素特徵 + CLIP → taste_vector + Chroma|✅ **完成**（preview/features(sharpness/blink/clip/phash/exif)/taste_vector/classifier/vectorstore；Protocol 注入 + lazy import；+43 tests）|
 |**M3**|階段 B 評分引擎 + XMP 輸出（先不接 LLM）               |✅ **完成**（score(gate/blend/bands)/dedup/export(xmp/report/foldering)/apply 管線/CLI；+33 tests）|
 |**M4**|接 Ollama Gemma：profile.md 生成 + 灰色地帶視覺仲裁   |✅ **完成**（injectable judge + fallback；`apply_to_folder` arbitrates maybe band；`learn_from_folder` writes profile.md；CLI wired + `n_arbitrated` surfaced；133 tests）|
-|**M5**|FastAPI + Web UI（拖資料夾、視覺化審片）              |⬜（可選）                  |
+|**M5**|FastAPI + Web UI（輸入資料夾路徑、視覺化審片）        |✅ **完成**（`create_app(settings)` factory，lazy fastapi/uvicorn/Pillow；純 `mappers.py` 把 LoadedProfile/Settings/ApplyReport → 設計的 UI JSON；端點 `/api/profiles[/{name}]`、`/api/settings`、`/api/learn`、`/api/apply`、`/api/thumb`（路徑穿越防護）+ 靜態 SPA；前端 `pv-boot.jsx` 改抓真資料；CLI `photovault serve`；161 tests）|
 
 
 > 每個 `core/` 模組配合成 fixture 編目檔（`tests/make_fake.py`）做 golden-file 測試。

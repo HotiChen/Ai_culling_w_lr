@@ -114,6 +114,35 @@ def apply(
         typer.secho(f"  note       : {note}", fg=typer.colors.YELLOW)
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
+    port: int = typer.Option(8000, "--port", help="Port to listen on"),
+) -> None:
+    """Launch the local web UI (M5). Requires the ``web`` extra.
+
+    Lazily imports FastAPI / uvicorn so the rest of the CLI works without them.
+    """
+    try:
+        import uvicorn  # noqa: F401
+    except ImportError:  # pragma: no cover - exercised only without the extra
+        typer.secho(
+            "the web UI needs the 'web' extra: pip install 'photovault[web]'",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    from photovault.api.app import create_app
+
+    settings = get_settings()
+    application = create_app(settings=settings)
+    typer.secho(
+        f"\n✓ PhotoVault web UI on http://{host}:{port}", fg=typer.colors.GREEN, bold=True
+    )
+    uvicorn.run(application, host=host, port=port)
+
+
 def main() -> None:  # pragma: no cover - console-script entrypoint
     app()
 

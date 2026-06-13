@@ -14,7 +14,7 @@
 | **M2** | 預覽抽取 + 像素特徵 + CLIP → taste_vector + Chroma | ✅ 完成 |
 | **M3** | 階段 B 評分引擎 + XMP 輸出 | ✅ 完成 |
 | **M4** | Gemma：profile.md 生成 + 灰色地帶視覺仲裁 | ✅ 完成 |
-| M5 | FastAPI + Web UI | ⬜（可選） |
+| **M5** | FastAPI + Web UI（輸入資料夾路徑、視覺化審片） | ✅ 完成 |
 
 ## 安裝
 
@@ -22,7 +22,8 @@
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .            # M1 核心（純 Python + numpy）
 pip install -e ".[pixels]"  # M2 起：rawpy / opencv / mediapipe / open-clip / chroma
-pip install -e ".[dev]"     # pytest
+pip install -e ".[web]"     # M5：fastapi / uvicorn / Pillow（本地 Web UI）
+pip install -e ".[dev]"     # pytest / httpx
 ```
 
 ## LLM：單一多模態 Gemma
@@ -56,8 +57,11 @@ photovault learn <編目檔資料夾> --name 熱茶 --no-llm   # 跳過 Gemma
 # 檢視學到的 profile
 photovault inspect --name 熱茶
 
-# 階段 B：對新照片資料夾評分（M3 實作中）
+# 階段 B：對新照片資料夾評分
 photovault apply <新照片資料夾> --name 熱茶
+
+# 開啟本地 Web UI（M5）
+photovault serve
 ```
 
 學完後的產物（見 ARCHITECTURE.md §3）：
@@ -71,6 +75,33 @@ photovault apply <新照片資料夾> --name 熱茶
 └── profile.md         # Gemma 生成的品味規則書（或 placeholder）
 ```
 
+## Web UI（M5）
+
+本地、離線的圖形介面：左側列出所有 Taste Profile，右側照工作流程
+（檔案總覽 → 選片 → 審片 → 仲裁 → 匯出）操作。所有運算都在本機，照片不出機。
+
+```bash
+pip install -e ".[web]"
+photovault serve                       # http://127.0.0.1:8000
+photovault serve --host 0.0.0.0 --port 9000
+```
+
+設計重點：
+
+- **後端** `photovault/api/`：`create_app(settings=None)` 工廠（lazy import
+  fastapi/uvicorn/Pillow，所以 `import photovault.core.*` 不需要這些套件）。
+  端點 — `GET /api/profiles`、`GET /api/profiles/{name}`、`GET /api/settings`、
+  `POST /api/learn`、`POST /api/apply`、`GET /api/thumb`，並把 React SPA
+  以靜態檔掛載在 `/`。
+- **純 mappers** `photovault/api/mappers.py`：把 `LoadedProfile` / `Settings` /
+  `ApplyReport` 轉成前端消費的 JSON 形狀（主要的 TDD 對象）。
+- **前端** `photovault/api/static/`：沿用既有設計（CSS/React 元件原封不動），
+  只把 mock 資料層換成抓 `/api/*` 的 `pv-boot.jsx`。
+- **資料夾選擇**：瀏覽器無法讀本機絕對路徑，所以「學習 / 選片」改用文字框
+  輸入資料夾的**絕對路徑**（保留 dropzone 視覺）。
+- **縮圖安全**：`/api/thumb` 只服務「最後一次 apply 的資料夾」內、且確實被
+  評分過的檔案（resolve + is-within 檢查），其餘一律 403/404，杜絕路徑穿越。
+
 ## 設定
 
 所有設定可用環境變數（前綴 `PHOTOVAULT_`，巢狀用 `__`）或 `.env` 覆寫。
@@ -80,5 +111,5 @@ photovault apply <新照片資料夾> --name 熱茶
 ## 測試
 
 ```bash
-pytest          # 39 tests，使用合成 .lrcat fixture，無需真實編目檔
+pytest          # 161 tests，使用合成 .lrcat fixture，無需真實編目檔
 ```
