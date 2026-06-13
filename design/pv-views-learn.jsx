@@ -1,0 +1,236 @@
+// pv-views-learn.jsx — Stage A (Learn), Profile Inspector, Settings
+
+// ── Stage A: Learn a Taste Profile from catalog folder(s) ────────────
+function LearnView({ accent, onDone }) {
+  const [phase, setPhase] = React.useState('drop'); // drop | running | done
+  const [folder, setFolder] = React.useState(null);
+  const [step, setStep] = React.useState(-1);
+  const [pct, setPct] = React.useState(0);
+  const steps = window.LEARN_STEPS;
+  const timer = React.useRef(null);
+
+  const start = () => {
+    setPhase('running'); setStep(0); setPct(0);
+    let i = 0;
+    timer.current = setInterval(() => {
+      i += 1;
+      if (i >= steps.length) { clearInterval(timer.current); setStep(steps.length); setPct(100); setTimeout(() => setPhase('done'), 500); }
+      else { setStep(i); setPct(Math.round(i / steps.length * 100)); }
+    }, 780);
+  };
+  React.useEffect(() => () => clearInterval(timer.current), []);
+
+  if (phase === 'drop') {
+    return (
+      <div className="page fade-in">
+        <div className="section-head"><h2>學習新品味檔案</h2><span className="hint">Stage A · learn from .lrcat</span></div>
+        <p className="muted" style={{ maxWidth: 620, lineHeight: 1.6, marginBottom: 22 }}>
+          指向你的 Lightroom 編目檔資料夾，PhotoVault 會以唯讀方式分析你過往的選片與調色，
+          學成一份可重複使用的「品味檔案」。原始檔已刪也能學 —— L1/L2 只住在編目檔，L3 改讀預覽快取。
+        </p>
+        <Dropzone icon="catalog"
+          title={folder || '拖入編目檔資料夾 · Drop catalog folder'}
+          sub="掃描所有 .lrcat（immutable=1，不動原檔）"
+          hint="~/Pictures/Lightroom/  ·  .lrcat × N"
+          onDrop={() => setFolder('~/Pictures/Lightroom Catalogs/')} />
+        {folder && (
+          <div className="card pad mt16" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <Icon name="catalog" s={22} style={{ color: accent }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>3 個編目檔 · 24,108 張照片</div>
+              <div className="h-sub">Wedding_2024.lrcat · Portraits_2025.lrcat · Travel.lrcat</div>
+            </div>
+            <div className="row gap8" style={{ alignItems: 'center' }}>
+              <label className="muted mono" style={{ fontSize: 11 }}>檔名</label>
+              <span className="badge neutral" style={{ fontSize: 12.5, padding: '5px 11px' }}>熱茶</span>
+            </div>
+            <Btn primary icon="cpu" onClick={start}>開始學習 · Learn</Btn>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (phase === 'running') {
+    return (
+      <div className="page fade-in" style={{ maxWidth: 720 }}>
+        <div className="section-head"><h2>學習中…</h2><span className="hint">Apple Silicon · MPS · 本地不出機</span></div>
+        <div className="card pad">
+          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+            <span className="muted" style={{ fontSize: 12.5 }}>階段 A 管線 · learn_from_folder()</span>
+            <span className="mono" style={{ fontSize: 13, color: accent }}>{pct}%</span>
+          </div>
+          <div className="bar-track" style={{ marginBottom: 22 }}><div className="bar-fill" style={{ width: pct + '%', background: accent, transition: 'width .6s' }}></div></div>
+          <div className="col" style={{ gap: 4 }}>
+            {steps.map((s, i) => {
+              const state = i < step ? 'done' : i === step ? 'now' : 'wait';
+              return (
+                <div key={s.k} className="row" style={{ gap: 12, padding: '9px 4px', opacity: state === 'wait' ? .4 : 1, transition: 'opacity .3s' }}>
+                  <span style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    background: state === 'done' ? 'var(--keep-soft)' : state === 'now' ? accent : 'rgba(255,255,255,.06)',
+                    color: state === 'done' ? 'var(--keep)' : state === 'now' ? '#241704' : 'var(--ink-3)' }}>
+                    {state === 'done' ? <Icon name="check" s={13} w={2.4} /> : state === 'now'
+                      ? <span className="spin" style={{ width: 11, height: 11, border: '2px solid #241704', borderTopColor: 'transparent', borderRadius: '50%', animation: 'sp .7s linear infinite' }}></span>
+                      : <span className="mono" style={{ fontSize: 11 }}>{i + 1}</span>}
+                  </span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{s.zh} <span className="muted mono" style={{ fontSize: 11 }}>· {s.en}</span></div>
+                  </div>
+                  <span className="muted mono" style={{ fontSize: 11 }}>{s.detail}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <style>{`@keyframes sp{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
+
+  // done
+  return (
+    <div className="page fade-in" style={{ maxWidth: 720 }}>
+      <div className="card pad" style={{ textAlign: 'center', padding: '40px 30px' }}>
+        <div style={{ width: 60, height: 60, borderRadius: 16, margin: '0 auto 18px', background: 'var(--keep-soft)', color: 'var(--keep)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name="check" s={30} w={2.4} />
+        </div>
+        <h2 style={{ fontSize: 19 }}>品味檔案「熱茶」已建立</h2>
+        <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>1,842 樣本 · 5 個 preset · profile.md 已由 Gemma 寫成</p>
+        <div className="grid-stats mt24" style={{ textAlign: 'left' }}>
+          <Stat v="22%" label="留存率" en="keep-rate" />
+          <Stat v="5" label="風格 preset" en="looks" color={accent} />
+          <Stat v="1.4" label="連拍留存" en="per burst" />
+          <Stat v="6400" label="ISO 容忍" en="max" />
+        </div>
+        <div className="row gap12 mt24" style={{ justifyContent: 'center' }}>
+          <Btn primary icon="profile" onClick={onDone}>檢視檔案 · Inspect</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Profile Inspector ────────────────────────────────────────────────
+function InspectorView({ profile, accent }) {
+  const T = window.THRESHOLDS;
+  return (
+    <div className="page fade-in">
+      <div className="grid-stats" style={{ marginBottom: 22 }}>
+        <Stat v={Math.round(profile.keepRate*100) + '%'} label="留存率" en="keep-rate" color={accent} />
+        <Stat v={profile.samples.toLocaleString()} label="訓練樣本" en="samples" />
+        <Stat v={profile.catalogs} label="來源編目檔" en="catalogs" />
+        <Stat v={T.burstRetain} label="連拍留存" en="per burst" />
+        <Stat v={'≤' + T.isoTolerance} label="ISO 容忍" en="tolerance" />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.15fr .85fr', gap: 16, alignItems: 'start' }}>
+        {/* rule-book */}
+        <div className="card pad">
+          <div className="section-head" style={{ marginBottom: 12 }}>
+            <h2 style={{ fontSize: 14 }}>品味規則書</h2>
+            <span className="hint">profile.md · Gemma 生成</span>
+          </div>
+          <MiniMd src={window.PROFILE_MD} />
+        </div>
+
+        {/* thresholds */}
+        <div className="col gap16">
+          <div className="card pad">
+            <div className="h-title" style={{ marginBottom: 14 }}>選片門檻 <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· thresholds.json</span></div>
+            <div className="kv"><span className="k">清晰度下限 · sharpness</span><span className="v">{T.sharpnessFloor} <span className="muted">var</span></span></div>
+            <div className="kv"><span className="k">閉眼 · closed-eyes</span><span className="v" style={{ color: 'var(--reject)' }}>絕不留</span></div>
+            <div className="kv"><span className="k">留片位置 · burst bias</span><span className="v">後段 late</span></div>
+            <div className="kv"><span className="k">keep 評等 · rating ≥</span><span className="v">{T.keepRating}★</span></div>
+          </div>
+          <div className="card pad">
+            <div className="h-title" style={{ marginBottom: 14 }}>光圈分佈 <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· aperture</span></div>
+            {T.apertures.map(a => <DistBar key={a.k} k={a.k} v={a.v} max={.4} />)}
+          </div>
+        </div>
+      </div>
+
+      {/* distributions row */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+        <div className="card pad">
+          <div className="h-title" style={{ marginBottom: 14 }}>焦段偏好 <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· focal length</span></div>
+          {T.focals.map(f => <DistBar key={f.k} k={f.k} v={f.v} max={.45} />)}
+        </div>
+        <div className="card pad">
+          <div className="h-title" style={{ marginBottom: 14 }}>ISO 留存分佈 <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· keepers by ISO</span></div>
+          {T.isoBuckets.map(b => <DistBar key={b.k} k={'ISO ' + b.k} v={b.v} max={.35} />)}
+        </div>
+      </div>
+
+      {/* presets */}
+      <div className="section-head mt24"><h2>風格 Presets</h2><span className="hint">L1 · develop settings → {window.PRESETS.length} looks → XMP</span></div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(208px, 1fr))', gap: 14 }}>
+        {window.PRESETS.map(p => (
+          <div key={p.id} className="preset-card">
+            <div className="preset-sw" style={{ background: p.grad, borderRadius: 0, border: 0, height: 70, position: 'relative' }}>
+              {p.sig && <span className="badge" style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(16,13,10,.7)', color: accent, fontSize: 9.5 }}>簽名檔 · signature</span>}
+            </div>
+            <div className="pad" style={{ padding: '12px 14px' }}>
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
+                <div className="mono" style={{ fontSize: 11, color: accent }}>{Math.round(p.share*100)}%</div>
+              </div>
+              <div className="h-sub" style={{ marginBottom: 8 }}>{p.en} · {p.id}.xmp</div>
+              <div className="row" style={{ flexWrap: 'wrap', gap: 5 }}>
+                {Object.entries(p.settings).slice(0, 4).map(([k, v]) => (
+                  <span key={k} className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', background: 'var(--raise)', padding: '2px 6px', borderRadius: 5 }}>{k} {v}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Settings ─────────────────────────────────────────────────────────
+function SettingsView({ accent }) {
+  const Field = ({ label, en, children }) => (
+    <div className="kv" style={{ padding: '12px 0', alignItems: 'center' }}>
+      <span className="k" style={{ color: 'var(--ink)', fontSize: 13 }}>{label} <span className="muted mono" style={{ fontSize: 11 }}>· {en}</span></span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>{children}</span>
+    </div>
+  );
+  const Pill = ({ children }) => <span className="badge neutral" style={{ fontSize: 12.5, padding: '5px 12px' }}>{children}</span>;
+  return (
+    <div className="page fade-in" style={{ maxWidth: 760 }}>
+      <div className="section-head"><h2>設定</h2><span className="hint">PHOTOVAULT_* · settings.py</span></div>
+      <div className="col gap16">
+        <div className="card pad">
+          <div className="h-title" style={{ marginBottom: 6 }}>選片門檻 <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· cull</span></div>
+          <Field label="keep 評等" en="keep_rating ≥"><Pill>3 ★</Pill></Field>
+          <Field label="reject 評等" en="reject_rating ≤"><Pill>1 ★</Pill></Field>
+          <Field label="連拍間隔" en="burst_gap_seconds"><Pill>2.0 s</Pill></Field>
+          <Field label="連拍最少張數" en="burst_min_frames"><Pill>3</Pill></Field>
+        </div>
+        <div className="card pad">
+          <div className="h-title" style={{ marginBottom: 6 }}>評分 <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· score</span></div>
+          <Field label="分類器權重" en="w_classifier"><Pill>0.6</Pill></Field>
+          <Field label="taste_vector 權重" en="w_taste"><Pill>0.4</Pill></Field>
+          <Field label="keep 門檻" en="keep_above"><span className="badge keep" style={{ padding: '5px 12px' }}>≥ 0.60</span></Field>
+          <Field label="reject 門檻" en="reject_below"><span className="badge reject" style={{ padding: '5px 12px' }}>&lt; 0.40</span></Field>
+          <Field label="pHash 去重距離" en="phash_hamming_max"><Pill>8</Pill></Field>
+        </div>
+        <div className="card pad">
+          <div className="h-title" style={{ marginBottom: 6 }}>風格分群 <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· style</span></div>
+          <Field label="preset 數量 (k)" en="n_presets"><Pill>5</Pill></Field>
+          <Field label="k-means 迭代" en="kmeans_iters"><Pill>50</Pill></Field>
+        </div>
+        <div className="card pad">
+          <div className="h-title" style={{ marginBottom: 6 }}>本地 LLM <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· llm</span></div>
+          <Field label="模型" en="model"><Pill>gemma4:12b</Pill></Field>
+          <Field label="主機" en="host"><Pill>localhost:11434</Pill></Field>
+          <Field label="溫度" en="temperature"><Pill>0.2</Pill></Field>
+          <Field label="啟用視覺仲裁" en="enabled"><span className="badge keep" style={{ padding: '5px 12px' }}><span className="dot-live"></span>ON</span></Field>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { LearnView, InspectorView, SettingsView });
