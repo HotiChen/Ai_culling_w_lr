@@ -182,8 +182,15 @@ def learn_from_folder(
     use_llm: bool = True,
     preview_cache: str | Path | None = None,
     embedder: Embedder | None = None,
+    judge=None,
 ) -> LearnReport:
-    """Run stage A and persist the profile. Returns a :class:`LearnReport`."""
+    """Run stage A and persist the profile. Returns a :class:`LearnReport`.
+
+    *judge* is an optional GemmaJudge-compatible object (must implement
+    ``write_profile(name, stats) -> str``).  When None and the LLM is
+    enabled, a real :class:`GemmaJudge` is constructed lazily.  Pass an
+    explicit object (e.g. a FakeJudge) to avoid any network calls in tests.
+    """
     catalogs = find_catalogs(catalog_folder)
     if not catalogs:
         raise ValueError(f"no .lrcat files found under {catalog_folder}")
@@ -224,14 +231,15 @@ def learn_from_folder(
     )
 
     # Optional LLM rule-book (Gemma). Falls back gracefully if unavailable.
+    # Use the injected judge when provided; otherwise build one lazily.
     profile_md: str | None = None
     llm_used = False
     llm_note = ""
     if use_llm and settings.llm.enabled:
+        active_judge = judge if judge is not None else GemmaJudge(settings.llm)
         try:
-            judge = GemmaJudge(settings.llm)
             llm_stats = {**summary, "presets": [p.params for p in style.presets]}
-            profile_md = judge.write_profile(name, llm_stats)
+            profile_md = active_judge.write_profile(name, llm_stats)
             llm_used = True
         except JudgeUnavailable as exc:
             llm_note = f"LLM unavailable, wrote placeholder profile.md ({exc})"

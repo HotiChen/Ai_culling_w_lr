@@ -11,9 +11,9 @@
 | M | 內容 | 狀態 |
 |---|------|------|
 | **M1** | 編目檔 → Profile（presets + L2 統計 + 標籤 CSV） | ✅ 完成 |
-| M2 | 預覽抽取 + 像素特徵 + CLIP → taste_vector + Chroma | ⬜ |
-| M3 | 階段 B 評分引擎 + XMP 輸出 | ⬜ |
-| M4 | Gemma：profile.md 生成 + 灰色地帶視覺仲裁 | 🟡 client 已就緒，待接管線 |
+| **M2** | 預覽抽取 + 像素特徵 + CLIP → taste_vector + Chroma | ✅ 完成 |
+| **M3** | 階段 B 評分引擎 + XMP 輸出 | ✅ 完成 |
+| **M4** | Gemma：profile.md 生成 + 灰色地帶視覺仲裁 | ✅ 完成 |
 | M5 | FastAPI + Web UI | ⬜（可選） |
 
 ## 安裝

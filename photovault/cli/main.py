@@ -79,7 +79,7 @@ def apply(
     photo_folder: Path = typer.Argument(..., exists=True, file_okay=False),
     name: str = typer.Option(..., "--name", "-n", help="Profile to score with"),
     no_llm: bool = typer.Option(
-        False, "--no-llm", help="Reserved for M4 gray-zone arbitration (no-op in M3)"
+        False, "--no-llm", help="Skip Gemma gray-zone arbitration; maybe items stay as maybe"
     ),
     report: bool = typer.Option(
         True, "--report/--no-report", help="Write an HTML review report"
@@ -94,23 +94,24 @@ def apply(
         typer.secho(f"profile '{name}' not found", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    _ = no_llm  # M4 will wire Gemma to arbitrate the `maybe` band.
     sort_dir = (photo_folder / "sorted") if sort else None
     result = apply_to_folder(
-        photo_folder, name, settings, report=report, sort_dir=sort_dir
+        photo_folder, name, settings, report=report, sort_dir=sort_dir,
+        no_llm=no_llm,
     )
 
     typer.secho(f"\n✓ Applied profile '{name}'", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  images : {result.n_images}")
-    typer.echo(f"  keep   : {result.n_keep}")
-    typer.echo(f"  maybe  : {result.n_maybe}")
-    typer.echo(f"  reject : {result.n_reject}")
+    typer.echo(f"  images     : {result.n_images}")
+    typer.echo(f"  keep       : {result.n_keep}")
+    typer.echo(f"  maybe      : {result.n_maybe}")
+    typer.echo(f"  reject     : {result.n_reject}")
+    typer.echo(f"  arbitrated : {result.n_arbitrated}")
     if result.report_path:
-        typer.echo(f"  report : {result.report_path}")
+        typer.echo(f"  report     : {result.report_path}")
     if result.sorted_dir:
-        typer.echo(f"  sorted : {result.sorted_dir}")
+        typer.echo(f"  sorted     : {result.sorted_dir}")
     for note in result.notes:
-        typer.secho(f"  note   : {note}", fg=typer.colors.YELLOW)
+        typer.secho(f"  note       : {note}", fg=typer.colors.YELLOW)
 
 
 def main() -> None:  # pragma: no cover - console-script entrypoint

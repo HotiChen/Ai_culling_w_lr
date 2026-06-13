@@ -52,6 +52,8 @@ class ApplyReport:
     n_keep: int
     n_maybe: int
     n_reject: int
+    # How many maybe items the LLM arbitrated (0 when LLM is disabled/unavailable).
+    n_arbitrated: int = 0
     results: list[ScoreResult] = field(default_factory=list)
     report_path: Path | None = None
     sorted_dir: Path | None = None
@@ -139,6 +141,64 @@ def _first_preset_xmp(preset_files: list[Path]) -> str | None:
         return None
 
 
+def _arbitrate_maybe(
+    results: list,
+    judge,
+    profile_md: str | None,
+    settings: Settings,
+    no_llm: bool,
+    notes: list[str],
+) -> int:
+    """Arbitrate the ``maybe`` bucket in-place using *judge*.
+
+    Returns the count of items actually decided by the LLM.  Mutates
+    *results* and *notes*.  Never raises — any failure leaves the item as
+    ``maybe`` and appends a note.
+
+    Decision tree:
+    1. ``no_llm=True`` -> skip, add note, return 0.
+    2. ``settings.llm.enabled=False`` and no explicit judge -> skip, add note, 0.
+    3. ``judge`` is None -> try to build a real GemmaJudge lazily.
+    4. Call ``judge.arbitrate`` for each maybe item; on ``JudgeUnavailable``
+       during the first call, abort the loop and add a note.
+    """
+    maybe_items = [r for r in results if r.decision == MAYBE]
+    if not maybe_items:
+        return 0
+
+    if no_llm:
+        notes.append("LLM arbitration skipped (--no-llm)")
+        return 0
+
+    # Resolve the judge: use the injected one, or build a lazy real one.
+    active_judge = judge
+    if active_judge is None:
+        if not settings.llm.enabled:
+            notes.append("LLM arbitration skipped (llm.enabled=False in settings)")
+            return 0
+        # Lazy construction of the real GemmaJudge; import is local to keep core/ clean.
+        from photovault.core.judge.ollama_client import GemmaJudge
+        active_judge = GemmaJudge(settings.llm)
+
+    rule_book = profile_md or ""
+    n_arbitrated = 0
+
+    for r in maybe_items:
+        try:
+            from photovault.core.judge.ollama_client import JudgeUnavailable
+            verdict = active_judge.arbitrate(r.path, rule_book)
+        except JudgeUnavailable as exc:
+            notes.append(f"LLM judge unavailable during arbitration: {exc}")
+            return n_arbitrated  # stop arbitrating; leave remaining as maybe
+
+        # Apply the verdict: keep -> KEEP, else -> REJECT.
+        r.decision = KEEP if verdict.keep else REJECT
+        r.reasons.append(f"gemma: {verdict.reason}")
+        n_arbitrated += 1
+
+    return n_arbitrated
+
+
 def apply_to_folder(
     photo_folder: str | Path,
     profile_name: str,
@@ -149,8 +209,17 @@ def apply_to_folder(
     sharpness_fn: Callable[[np.ndarray], float] | None = None,
     report: bool = True,
     sort_dir: str | Path | None = None,
+    judge=None,
+    no_llm: bool = False,
 ) -> ApplyReport:
-    """Run stage B over *photo_folder* using profile *profile_name*."""
+    """Run stage B over *photo_folder* using profile *profile_name*.
+
+    *judge* is an optional GemmaJudge-compatible object (must implement
+    ``arbitrate(image_path, rule_book) -> Verdict``). When None and the LLM
+    is enabled in settings (and *no_llm* is False), a real GemmaJudge is
+    constructed lazily. Pass ``no_llm=True`` or set ``settings.llm.enabled=False``
+    to skip arbitration entirely — maybe items stay as maybe.
+    """
     folder = Path(photo_folder)
     profile = load_profile(settings.profiles_dir, profile_name)
     cfg = settings.score
@@ -223,6 +292,17 @@ def apply_to_folder(
         results, hashes, profile.thresholds.burst_keep_rate, cfg
     )
 
+    # --- Gray-zone arbitration (M4) ------------------------------------------ #
+    # Only maybe items get sent to the LLM; keep/reject are already decided by CV+CLIP.
+    n_arbitrated = _arbitrate_maybe(
+        results=results,
+        judge=judge,
+        profile_md=profile.profile_md,
+        settings=settings,
+        no_llm=no_llm,
+        notes=notes,
+    )
+
     # --- Export --------------------------------------------------------------- #
     preset_xmp = _first_preset_xmp(profile.preset_files)
     for r in results:
@@ -247,6 +327,7 @@ def apply_to_folder(
         n_keep=n_keep,
         n_maybe=n_maybe,
         n_reject=n_reject,
+        n_arbitrated=n_arbitrated,
         results=results,
         report_path=report_path,
         sorted_dir=sorted_dir,

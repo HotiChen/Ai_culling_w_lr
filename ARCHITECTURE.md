@@ -153,9 +153,9 @@ photovault/
 |M     |內容                                        |狀態                     |
 |------|------------------------------------------|-----------------------|
 |**M1**|編目檔 → Profile（presets + L2 統計 + 標籤 CSV）   |✅ **完成**（reader/style/cull_logic/labels/profile/learn/CLI + 39 tests）|
-|**M2**|預覽抽取 + 像素特徵 + CLIP → taste_vector + Chroma|⬜                      |
-|**M3**|階段 B 評分引擎 + XMP 輸出（先不接 LLM）               |⬜                      |
-|**M4**|接 Ollama Gemma：profile.md 生成 + 灰色地帶視覺仲裁   |🟡 `GemmaJudge` client 已就緒，待接入管線     |
+|**M2**|預覽抽取 + 像素特徵 + CLIP → taste_vector + Chroma|✅ **完成**（preview/features(sharpness/blink/clip/phash/exif)/taste_vector/classifier/vectorstore；Protocol 注入 + lazy import；+43 tests）|
+|**M3**|階段 B 評分引擎 + XMP 輸出（先不接 LLM）               |✅ **完成**（score(gate/blend/bands)/dedup/export(xmp/report/foldering)/apply 管線/CLI；+33 tests）|
+|**M4**|接 Ollama Gemma：profile.md 生成 + 灰色地帶視覺仲裁   |✅ **完成**（injectable judge + fallback；`apply_to_folder` arbitrates maybe band；`learn_from_folder` writes profile.md；CLI wired + `n_arbitrated` surfaced；133 tests）|
 |**M5**|FastAPI + Web UI（拖資料夾、視覺化審片）              |⬜（可選）                  |
 
 
