@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photovault"
+version = "0.1.0"
+description = "Local, offline personalized photo-culling / pre-develop engine that learns your eye from Lightroom catalogs."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "PhotoVault" }]
+
+# M1 only needs a small, pure-Python/light footprint so the catalog -> profile
+# pipeline and its tests run anywhere. Heavier, Apple-Silicon-specific deps
+# (rawpy, opencv, mediapipe, open-clip-torch, chromadb, scikit-learn) come in
+# with the later milestones and live in the optional extras below.
+dependencies = [
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "typer>=0.12",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# M2: preview extraction + pixel features + CLIP embeddings + vector store.
+pixels = [
+    "rawpy>=0.21",
+    "Pillow>=10.0",
+    "opencv-python>=4.9",
+    "mediapipe>=0.10",
+    "imagehash>=4.3",
+    "open-clip-torch>=2.24",
+    "torch>=2.2",
+    "chromadb>=0.4",
+    "scikit-learn>=1.4",
+]
+# M5: optional web UI.
+web = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+photovault = "photovault.cli.main:app"
+
+[tool.setuptools.packages.find]
+include = ["photovault*"]
+
+[tool.pytest.ini_options]
+testpaths = ["photovault/tests"]
+addopts = "-q"
