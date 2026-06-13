@@ -14,6 +14,7 @@ import typer
 
 from photovault.core.learn import learn_from_folder
 from photovault.core.profile import load_profile, profile_exists
+from photovault.core.score import apply_to_folder
 from photovault.settings import get_settings
 
 app = typer.Typer(
@@ -76,16 +77,40 @@ def inspect(
 @app.command()
 def apply(
     photo_folder: Path = typer.Argument(..., exists=True, file_okay=False),
-    name: str = typer.Option(..., "--name", "-n"),
-    no_llm: bool = typer.Option(False, "--no-llm"),
+    name: str = typer.Option(..., "--name", "-n", help="Profile to score with"),
+    no_llm: bool = typer.Option(
+        False, "--no-llm", help="Reserved for M4 gray-zone arbitration (no-op in M3)"
+    ),
+    report: bool = typer.Option(
+        True, "--report/--no-report", help="Write an HTML review report"
+    ),
+    sort: bool = typer.Option(
+        False, "--sort/--no-sort", help="Copy photos into keep/maybe/reject subfolders"
+    ),
 ) -> None:
-    """Stage B: score a new photo folder using a profile. (Implemented in M3.)"""
-    _ = (photo_folder, name, no_llm)
-    typer.secho(
-        "`apply` (stage B scoring) lands in milestone M3 — not yet implemented.",
-        fg=typer.colors.YELLOW,
+    """Stage B: score a new photo folder using a learned profile (M3)."""
+    settings = get_settings()
+    if not profile_exists(settings.profiles_dir, name):
+        typer.secho(f"profile '{name}' not found", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    _ = no_llm  # M4 will wire Gemma to arbitrate the `maybe` band.
+    sort_dir = (photo_folder / "sorted") if sort else None
+    result = apply_to_folder(
+        photo_folder, name, settings, report=report, sort_dir=sort_dir
     )
-    raise typer.Exit(code=2)
+
+    typer.secho(f"\n✓ Applied profile '{name}'", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  images : {result.n_images}")
+    typer.echo(f"  keep   : {result.n_keep}")
+    typer.echo(f"  maybe  : {result.n_maybe}")
+    typer.echo(f"  reject : {result.n_reject}")
+    if result.report_path:
+        typer.echo(f"  report : {result.report_path}")
+    if result.sorted_dir:
+        typer.echo(f"  sorted : {result.sorted_dir}")
+    for note in result.notes:
+        typer.secho(f"  note   : {note}", fg=typer.colors.YELLOW)
 
 
 def main() -> None:  # pragma: no cover - console-script entrypoint

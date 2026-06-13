@@ -84,3 +84,31 @@ def read_exif(path: str | Path) -> ExifData:
         return _read_exif_pillow(p)
     except Exception:
         return ExifData()
+
+
+def read_capture_time(path: str | Path) -> str | None:
+    """Read the capture-time string (EXIF ``DateTimeOriginal``) from *path*.
+
+    Returns the raw EXIF text (``"YYYY:MM:DD HH:MM:SS"``) so it can be fed to
+    :func:`photovault.core.catalog.cull_logic.parse_capture_time`, which already
+    handles that format. Returns ``None`` when the tag is absent / unreadable.
+    """
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        from PIL import Image  # lazy
+        from PIL.ExifTags import Base
+
+        with Image.open(p) as img:
+            ex = img.getexif()
+        if not ex:
+            return None
+        # DateTimeOriginal lives in the Exif IFD; fall back to DateTime (0x0132).
+        ifd = ex.get_ifd(0x8769)  # ExifOffset
+        value = ifd.get(Base.DateTimeOriginal.value) if ifd else None
+        if value is None:
+            value = ex.get(Base.DateTime.value)
+        return str(value) if value else None
+    except Exception:
+        return None

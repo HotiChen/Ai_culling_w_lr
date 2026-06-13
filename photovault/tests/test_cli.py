@@ -38,7 +38,25 @@ def test_inspect_missing(env):
     assert "not found" in result.output
 
 
-def test_apply_not_implemented(env, catalog_folder: Path):
-    result = runner.invoke(app, ["apply", str(catalog_folder), "--name", "熱茶"])
-    assert result.exit_code == 2
-    assert "M3" in result.output
+def test_apply_runs_stage_b(env, catalog_folder: Path, new_photos: Path):
+    pytest.importorskip("PIL")
+    # Learn an M1-only profile so apply has something to load without an embedder.
+    learn = runner.invoke(
+        app, ["learn", str(catalog_folder), "--name", "熱茶", "--no-llm"]
+    )
+    assert learn.exit_code == 0, learn.output
+
+    result = runner.invoke(
+        app, ["apply", str(new_photos), "--name", "熱茶", "--no-llm", "--no-report"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "keep" in result.output.lower()
+    assert "maybe" in result.output.lower()
+    assert "reject" in result.output.lower()
+
+
+def test_apply_missing_profile(env, new_photos: Path):
+    pytest.importorskip("PIL")
+    result = runner.invoke(app, ["apply", str(new_photos), "--name", "ghost"])
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()

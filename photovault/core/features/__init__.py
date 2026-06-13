@@ -11,7 +11,7 @@ from photovault.core.features.blink import (
     is_blinking,
 )
 from photovault.core.features.clip_embed import Embedder
-from photovault.core.features.exif import read_exif
+from photovault.core.features.exif import read_capture_time, read_exif
 from photovault.core.features.phash import hamming, phash
 from photovault.core.features.sharpness import sharpness_score
 
@@ -22,6 +22,7 @@ __all__ = [
     "hamming",
     "is_blinking",
     "phash",
+    "read_capture_time",
     "read_exif",
     "sharpness_score",
 ]

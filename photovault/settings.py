@@ -38,6 +38,29 @@ class StyleSettings(BaseModel):
     random_seed: int = 42
 
 
+class ScoreSettings(BaseModel):
+    """Stage-B scoring knobs (M3): taste blend, decision bands, dedup.
+
+    The taste score is a weighted mean of the classifier keep-probability and
+    the cosine similarity to the taste_vector (remapped from ``[-1, 1]`` to
+    ``[0, 1]``). Decisions fall into ``keep`` / ``maybe`` / ``reject`` bands:
+    score ``>= keep_above`` keeps, ``< reject_below`` rejects, the gray zone in
+    between is flagged ``maybe`` (M4 wires Gemma to arbitrate it).
+    """
+
+    # Blend weights for the taste score (normalized internally; need not sum 1).
+    w_classifier: float = Field(0.6, ge=0.0, description="classifier keep-prob weight")
+    w_taste: float = Field(0.4, ge=0.0, description="taste_vector similarity weight")
+    # Decision bands over the final score in [0, 1].
+    keep_above: float = Field(0.6, ge=0.0, le=1.0, description="score >= this -> keep")
+    reject_below: float = Field(0.4, ge=0.0, le=1.0, description="score < this -> reject")
+    # Burst de-duplication: two frames within this pHash hamming distance are
+    # treated as near-duplicates of each other.
+    phash_hamming_max: int = Field(
+        8, ge=0, le=64, description="max pHash hamming distance for near-duplicates"
+    )
+
+
 class LLMSettings(BaseModel):
     """Local LLM (Ollama) used as the explainable arbiter.
 
@@ -75,6 +98,7 @@ class Settings(BaseSettings):
 
     cull: CullSettings = Field(default_factory=CullSettings)
     style: StyleSettings = Field(default_factory=StyleSettings)
+    score: ScoreSettings = Field(default_factory=ScoreSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
 
     def profile_dir(self, name: str) -> Path:

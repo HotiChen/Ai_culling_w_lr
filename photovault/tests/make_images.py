@@ -72,6 +72,31 @@ def write_jpeg(path: str | Path, arr: np.ndarray, exif: dict | None = None) -> P
     return out
 
 
+def write_jpeg_with_capture_time(
+    path: str | Path, arr: np.ndarray, capture_time: str, **exif_extra: object
+) -> Path:
+    """Write a JPEG carrying ``DateTimeOriginal`` (and optional extra EXIF tags).
+
+    *capture_time* uses EXIF text form ``"YYYY:MM:DD HH:MM:SS"`` so it round-trips
+    through :func:`photovault.core.features.exif.read_capture_time`. Extra tags
+    (e.g. ``FNumber``, ``ISOSpeedRatings``) are passed by Pillow tag id.
+    """
+    from PIL import Image
+    from PIL.ExifTags import Base
+
+    out = Path(path)
+    img = Image.fromarray(arr)
+    exif = img.getexif()
+    # DateTimeOriginal lives in the Exif sub-IFD (0x8769).
+    sub = exif.get_ifd(0x8769)
+    sub[Base.DateTimeOriginal.value] = capture_time
+    exif[Base.DateTime.value] = capture_time
+    for tag, value in exif_extra.items():
+        exif[int(getattr(Base, tag).value)] = value  # type: ignore[arg-type]
+    img.save(out, format="JPEG", exif=exif)
+    return out
+
+
 def wrap_lrprev(jpeg: bytes, name_hint: str = "preview") -> bytes:
     """Wrap a JPEG inside a fake ``.lrprev`` container.
 
