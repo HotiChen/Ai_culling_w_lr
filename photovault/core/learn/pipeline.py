@@ -75,6 +75,30 @@ def _read_all_images(catalogs: list[Path]) -> list[CatalogImage]:
     return images
 
 
+def _train_metadata_classifier(rows):
+    """Train a keep/reject classifier from labeled rows using metadata features
+    only (no pixels). Returns a model, or None if it can't be trained (fewer
+    than two classes, or scikit-learn unavailable)."""
+    labeled = [r for r in rows if r.label != Label.UNLABELED.value]
+    if len(labeled) < 2:
+        return None
+    train_rows = [{"label": r.label} for r in labeled]
+    train_feats = [
+        {
+            "iso": r.iso,
+            "aperture_f": r.aperture_f,
+            "focal_length": r.focal_length,
+            "shutter_seconds": r.shutter_seconds,
+            "burst_position": r.burst_position,
+        }
+        for r in labeled
+    ]
+    try:
+        return train_classifier(train_rows, train_feats)
+    except Exception:
+        return None  # e.g. scikit-learn not installed
+
+
 def has_curation_signal(images: list[CatalogImage]) -> bool:
     """True if any image carries a pick flag, a star rating, or a color label.
 
@@ -374,6 +398,13 @@ def learn_from_folder(
     n_keepers = sum(1 for r in rows if r.label == Label.KEEP.value)
     n_rejects = sum(1 for r in rows if r.label == Label.REJECT.value)
 
+    # Always train a metadata keep/reject classifier from the labeled rows, so
+    # even a no-pixels (web) learn produces a real taste model — culling can then
+    # score by your historical aperture/ISO/focal/burst-position decisions
+    # instead of falling back to a gate-only pass. The pixel stage (if it runs)
+    # trains a richer classifier that overrides this one.
+    meta_classifier = _train_metadata_classifier(rows)
+
     # L1 style presets.
     _emit({"phase": "style"})
     style = extract_style(images, settings.style)
@@ -451,7 +482,11 @@ def learn_from_folder(
             profile_md=profile_md,
             labels_csv=csv_path,
             taste_vector=pixel.taste_vector if pixel else None,
-            classifier=pixel.classifier if pixel else None,
+            classifier=(
+                pixel.classifier
+                if (pixel and pixel.classifier is not None)
+                else meta_classifier
+            ),
         )
 
     # Populate the vector store under the profile's chroma/ dir.

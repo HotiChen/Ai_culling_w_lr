@@ -128,6 +128,15 @@ def test_learn_progress_events(catalog_folder: Path, settings: Settings):
     assert ce["stats"]["n_images"] == 11
 
 
+def test_learn_trains_metadata_classifier_without_pixels(catalog_folder: Path, settings: Settings):
+    # A web-style learn (no preview_cache / embedder) must still persist a
+    # keep/reject classifier so culling isn't gate-only.
+    learn_from_folder(catalog_folder, "meta", settings, use_llm=False)
+    prof = load_profile(settings.profiles_dir, "meta")
+    assert prof.classifier is not None
+    assert prof.taste_vector is None  # no CLIP without pixels
+
+
 def test_learn_end_to_end(catalog_folder: Path, settings: Settings):
     report = learn_from_folder(catalog_folder, "熱茶", settings, use_llm=False)
 

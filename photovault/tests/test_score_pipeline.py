@@ -88,18 +88,26 @@ def test_apply_dedups_the_burst(
     assert report.n_reject >= 1
 
 
-def test_apply_gate_only_for_m1_profile(
+def test_apply_uses_metadata_classifier_without_pixels(
     new_photos: Path, settings: Settings, catalog_folder: Path
 ):
-    """A profile lacking taste_vector/classifier degrades to gate-only + a note."""
+    """A no-pixels (web-style) learn still trains a metadata keep/reject model,
+    so culling scores by it rather than degrading to a gate-only pass."""
     from photovault.core.learn import learn_from_folder
+    from photovault.core.profile import load_profile
 
-    learn_from_folder(catalog_folder, "m1only", settings, use_llm=False)
+    learn_from_folder(catalog_folder, "metaonly", settings, use_llm=False)
+    prof = load_profile(settings.profiles_dir, "metaonly")
+    assert prof.classifier is not None  # metadata classifier was trained
+    assert prof.taste_vector is None    # but no CLIP taste vector (no pixels)
+
     report = apply_to_folder(
-        new_photos, "m1only", settings, embedder=FakeEmbedder(), blink_fn=_fake_blink
+        new_photos, "metaonly", settings, embedder=FakeEmbedder(), blink_fn=_fake_blink
     )
     assert report.n_images == 6
-    assert "gate" in " ".join(report.notes).lower()
+    # Real scores now exist (classifier prob), not a gate-only None pass.
+    assert any(r.score is not None for r in report.results)
+    assert "gate-only" not in " ".join(report.notes).lower()
 
 
 def test_apply_without_embedder_skips_taste(
