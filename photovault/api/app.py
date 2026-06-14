@@ -178,6 +178,65 @@ def create_app(settings: Optional[Any] = None):
 
         return mappers.apply_payload(report, folder)
 
+    @app.post("/api/apply/stream")
+    async def post_apply_stream(request: Request):
+        """Run stage B while streaming live per-photo progress as NDJSON.
+
+        Events: ``scan`` (photo count), ``photo`` (per file: name, index/total,
+        provisional band + star rating + score), ``dedup`` / ``arbitrate`` /
+        ``export`` phases, then ``done`` (full review payload) or ``error``.
+        """
+        import json
+        import queue
+        import threading
+
+        body = await request.json()
+        photo_folder = body.get("photo_folder")
+        name = body.get("name")
+        no_llm = bool(body.get("no_llm", False))
+        do_report = bool(body.get("report", False))
+        do_sort = bool(body.get("sort", False))
+        s = _settings()
+        if not photo_folder or not name:
+            raise HTTPException(status_code=400, detail="photo_folder and name required")
+        if not profile_exists(s.profiles_dir, name):
+            raise HTTPException(status_code=404, detail=f"profile not found: {name}")
+        folder = Path(photo_folder).expanduser()
+        if not folder.is_dir():
+            raise HTTPException(status_code=400, detail=f"not a folder: {folder}")
+        sort_dir = (folder / "sorted") if do_sort else None
+
+        events: "queue.Queue" = queue.Queue()
+        sentinel = object()
+
+        def run() -> None:
+            try:
+                report = apply_to_folder(
+                    folder, name, s, report=do_report, sort_dir=sort_dir,
+                    no_llm=no_llm, progress=events.put,
+                )
+                # Confine /api/thumb to this run's scored files.
+                app.state.last_folder = folder.resolve()
+                app.state.last_paths = {
+                    str(Path(r.path).resolve()) for r in report.results
+                }
+                events.put({"phase": "done", "payload": mappers.apply_payload(report, folder)})
+            except Exception as exc:
+                events.put({"phase": "error", "detail": str(exc)})
+            finally:
+                events.put(sentinel)
+
+        threading.Thread(target=run, daemon=True).start()
+
+        def emit():
+            while True:
+                ev = events.get()
+                if ev is sentinel:
+                    break
+                yield json.dumps(ev, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(emit(), media_type="application/x-ndjson")
+
     @app.post("/api/pick-folder")
     def pick_folder() -> Any:
         """Open a native OS folder chooser and return the picked absolute path.

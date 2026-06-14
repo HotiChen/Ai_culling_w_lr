@@ -10,11 +10,12 @@ function CullView({ accent, onDone, profileId }) {
   const [folder, setFolder] = React.useState('');
   const [picking, setPicking] = React.useState(false);
   const [pickerSupported, setPickerSupported] = React.useState(true);
-  const [step, setStep] = React.useState(-1);
-  const [pct, setPct] = React.useState(0);
   const [error, setError] = React.useState(null);
-  const steps = window.CULL_STEPS;
-  const timer = React.useRef(null);
+  // Live cull progress (driven by /api/apply/stream events).
+  const [prog, setProg] = React.useState({ pct: 0, label: '', name: '', index: 0, total: 0 });
+  const [cur, setCur] = React.useState(null);  // current photo event
+  const [tally, setTally] = React.useState({ keep: 0, maybe: 0, reject: 0 });
+  const [recent, setRecent] = React.useState([]);  // last few photos
 
   const pickFolder = async () => {
     setError(null); setPicking(true);
@@ -24,23 +25,43 @@ function CullView({ accent, onDone, profileId }) {
     else if (res && res.supported === false) setPickerSupported(false);
   };
 
-  // Run the REAL apply (POST /api/apply) while the cosmetic progress animates.
+  // Run the REAL apply, streaming live per-photo verdicts.
+  const PHASE_LABEL = { scan: '掃描資料夾', dedup: '連拍去重', arbitrate: 'Gemma 仲裁', export: '寫入 XMP / 報告' };
   const start = () => {
-    if (!folder) { setError('請輸入照片資料夾的絕對路徑'); return; }
+    if (!folder) { setError('請先選擇照片資料夾'); return; }
     if (!profileId) { setError('請先選擇或建立一個品味檔案'); return; }
-    setError(null);
-    setPhase('running'); setStep(0); setPct(0);
-    let i = 0;
-    timer.current = setInterval(() => {
-      i += 1;
-      if (i >= steps.length - 1) { setStep(steps.length - 1); setPct(92); clearInterval(timer.current); }
-      else { setStep(i); setPct(Math.round(i / steps.length * 100)); }
-    }, 560);
-    window.pvApply(folder, profileId, { no_llm: true })
-      .then(() => { clearInterval(timer.current); setStep(steps.length); setPct(100); setTimeout(() => onDone(), 300); })
-      .catch((e) => { clearInterval(timer.current); setError(String(e.message || e)); setPhase('drop'); });
+    setError(null); setPhase('running');
+    setProg({ pct: 2, label: PHASE_LABEL.scan, name: '', index: 0, total: 0 });
+    setCur(null); setTally({ keep: 0, maybe: 0, reject: 0 }); setRecent([]);
+    let keep = 0, maybe = 0, reject = 0;
+    const rec = [];
+    window.pvApplyStream(folder, profileId, { no_llm: true }, (ev) => {
+      if (ev.phase === 'scan') {
+        setProg((p) => ({ ...p, label: PHASE_LABEL.scan, total: ev.n_photos }));
+      } else if (ev.phase === 'photo') {
+        if (!ev.skipped) {
+          if (ev.band === 'keep') keep += 1;
+          else if (ev.band === 'maybe') maybe += 1;
+          else if (ev.band === 'reject') reject += 1;
+        }
+        setCur(ev);
+        setTally({ keep, maybe, reject });
+        rec.unshift(ev); if (rec.length > 6) rec.pop();
+        setRecent([...rec]);
+        setProg({
+          label: '逐張評分', name: ev.name, index: ev.index, total: ev.total,
+          pct: Math.round((ev.index / Math.max(1, ev.total)) * 88),
+        });
+      } else if (PHASE_LABEL[ev.phase]) {
+        setProg((p) => ({ ...p, label: PHASE_LABEL[ev.phase], pct: ev.phase === 'export' ? 98 : Math.max(p.pct, 90) }));
+      } else if (ev.phase === 'done') {
+        setProg((p) => ({ ...p, pct: 100 }));
+        setTimeout(() => onDone(), 250);
+      } else if (ev.phase === 'error') {
+        setError(ev.detail || 'cull failed'); setPhase('drop');
+      }
+    }).catch((e) => { setError(String(e.message || e)); setPhase('drop'); });
   };
-  React.useEffect(() => () => clearInterval(timer.current), []);
 
   if (phase === 'drop') {
     return (
@@ -82,35 +103,50 @@ function CullView({ accent, onDone, profileId }) {
     );
   }
 
+  const bandZh = { keep: '留', maybe: '待定', reject: '淘汰' };
+  const PhotoRow = ({ ev, big }) => (
+    <div className="row gap12" style={{ alignItems: 'center', padding: big ? '0' : '6px 0' }}>
+      <Icon name="image" s={big ? 18 : 14} style={{ color: 'var(--ink-3)', flexShrink: 0 }} />
+      <span className="mono" style={{ flex: 1, fontSize: big ? 13 : 12, wordBreak: 'break-all', fontWeight: big ? 600 : 400 }}>{ev.name}</span>
+      {!ev.skipped && ev.stars > 0 && <Stars n={ev.stars} size={big ? 13 : 11} />}
+      {ev.skipped
+        ? <span className="badge neutral">略過</span>
+        : <span className={'badge ' + ev.band}>{bandZh[ev.band] || ev.band}</span>}
+      <span className="mono" style={{ width: 38, textAlign: 'right', fontSize: big ? 12 : 11, color: BAND_COLOR[ev.band] || 'var(--ink-3)' }}>{fmtScore(ev.score)}</span>
+    </div>
+  );
+
   return (
-    <div className="page fade-in" style={{ maxWidth: 720 }}>
-      <div className="section-head"><h2>選片中…</h2><span className="hint">36 frames · 8 bursts</span></div>
+    <div className="page fade-in" style={{ maxWidth: 760 }}>
+      <div className="section-head"><h2>選片中…</h2><span className="hint">本地不出機 · {prog.label}</span></div>
       <div className="card pad">
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-          <span className="muted" style={{ fontSize: 12.5 }}>階段 B 管線 · apply_to_folder()</span>
-          <span className="mono" style={{ fontSize: 13, color: accent }}>{pct}%</span>
+          <span className="muted" style={{ fontSize: 12.5 }}>
+            {prog.total ? `照片 ${prog.index}/${prog.total}` : '掃描中…'} · apply_to_folder()
+          </span>
+          <span className="mono" style={{ fontSize: 13, color: accent }}>{prog.pct}%</span>
         </div>
-        <div className="bar-track" style={{ marginBottom: 22 }}><div className="bar-fill" style={{ width: pct + '%', background: accent, transition: 'width .55s' }}></div></div>
-        <div className="col" style={{ gap: 4 }}>
-          {steps.map((s, i) => {
-            const state = i < step ? 'done' : i === step ? 'now' : 'wait';
-            return (
-              <div key={s.k} className="row" style={{ gap: 12, padding: '9px 4px', opacity: state === 'wait' ? .4 : 1, transition: 'opacity .3s' }}>
-                <span style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                  background: state === 'done' ? 'var(--keep-soft)' : state === 'now' ? accent : 'rgba(255,255,255,.06)',
-                  color: state === 'done' ? 'var(--keep)' : state === 'now' ? '#241704' : 'var(--ink-3)' }}>
-                  {state === 'done' ? <Icon name="check" s={13} w={2.4} /> : state === 'now'
-                    ? <span style={{ width: 11, height: 11, border: '2px solid #241704', borderTopColor: 'transparent', borderRadius: '50%', animation: 'sp .7s linear infinite' }}></span>
-                    : <span className="mono" style={{ fontSize: 11 }}>{i + 1}</span>}
-                </span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{s.zh} <span className="muted mono" style={{ fontSize: 11 }}>· {s.en}</span></div>
-                </div>
-                <span className="muted mono" style={{ fontSize: 11 }}>{s.detail}</span>
+        <div className="bar-track" style={{ marginBottom: 16 }}>
+          <div className="bar-fill" style={{ width: prog.pct + '%', background: accent, transition: 'width .25s' }}></div>
+        </div>
+
+        <div className="row gap16" style={{ marginBottom: 14 }}>
+          <span className="mono" style={{ fontSize: 12 }}>留 <b style={{ color: 'var(--keep)' }}>{tally.keep}</b></span>
+          <span className="mono" style={{ fontSize: 12 }}>待定 <b style={{ color: 'var(--maybe)' }}>{tally.maybe}</b></span>
+          <span className="mono" style={{ fontSize: 12 }}>淘汰 <b style={{ color: 'var(--reject)' }}>{tally.reject}</b></span>
+        </div>
+
+        {cur && (
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+            <PhotoRow ev={cur} big />
+            {cur.reason && <div className="muted mono" style={{ fontSize: 11, marginTop: 6, paddingLeft: 30 }}>{cur.reason}</div>}
+            {recent.length > 1 && (
+              <div className="col" style={{ gap: 0, marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 6 }}>
+                {recent.slice(1).map((ev, i) => <PhotoRow key={ev.name + i} ev={ev} />)}
               </div>
-            );
-          })}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

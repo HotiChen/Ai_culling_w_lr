@@ -224,6 +224,29 @@ def test_learn_stream_error_event(client: TestClient, tmp_path: Path):
     assert any(e["phase"] == "error" for e in events)
 
 
+def test_apply_stream_emits_photos_and_done(settings: Settings, learned_profile: str, new_photos: Path):
+    import json
+
+    client = TestClient(create_app(settings=settings))
+    events = []
+    with client.stream(
+        "POST",
+        "/api/apply/stream",
+        json={"photo_folder": str(new_photos), "name": learned_profile, "no_llm": True},
+    ) as r:
+        assert r.status_code == 200
+        for line in r.iter_lines():
+            if line.strip():
+                events.append(json.loads(line))
+
+    phases = [e["phase"] for e in events]
+    assert "scan" in phases and "photo" in phases and "done" in phases
+    photo = next(e for e in events if e["phase"] == "photo")
+    assert photo["name"].endswith(".jpg") and "band" in photo and "stars" in photo
+    done = next(e for e in events if e["phase"] == "done")
+    assert done["payload"]["bandCounts"]["total"] == 6
+
+
 def test_pick_folder_returns_dialog_path(client: TestClient, monkeypatch):
     # The native dialog is mocked (no real Finder in CI / on Linux).
     import photovault.api.app as appmod

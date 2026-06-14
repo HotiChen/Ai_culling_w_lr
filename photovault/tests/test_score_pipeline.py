@@ -40,6 +40,24 @@ def test_apply_produces_decisions_and_outputs(
     assert Path(report.report_path).exists()
 
 
+def test_apply_emits_per_photo_progress(
+    new_photos: Path, settings: Settings, learned_profile: str
+):
+    events: list = []
+    apply_to_folder(
+        new_photos, learned_profile, settings,
+        embedder=FakeEmbedder(), blink_fn=_fake_blink, progress=events.append,
+    )
+    phases = [e["phase"] for e in events]
+    assert "scan" in phases and "export" in phases
+    photos = [e for e in events if e["phase"] == "photo"]
+    assert len(photos) == 6  # one event per image
+    for ph in photos:
+        assert ph["name"].endswith(".jpg")
+        assert ph["band"] in ("keep", "maybe", "reject")
+        assert 0 <= ph["stars"] <= 5
+
+
 def test_apply_dedups_the_burst(
     new_photos: Path, settings: Settings, learned_profile: str
 ):

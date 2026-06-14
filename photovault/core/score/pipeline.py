@@ -199,6 +199,13 @@ def _arbitrate_maybe(
     return n_arbitrated
 
 
+def _stars(score: "float | None") -> int:
+    """Map a 0..1 taste score to a 0..5 star rating (gate-only -> 0)."""
+    if score is None:
+        return 0
+    return max(0, min(5, round(float(score) * 5)))
+
+
 def apply_to_folder(
     photo_folder: str | Path,
     profile_name: str,
@@ -211,6 +218,7 @@ def apply_to_folder(
     sort_dir: str | Path | None = None,
     judge=None,
     no_llm: bool = False,
+    progress=None,
 ) -> ApplyReport:
     """Run stage B over *photo_folder* using profile *profile_name*.
 
@@ -219,7 +227,15 @@ def apply_to_folder(
     is enabled in settings (and *no_llm* is False), a real GemmaJudge is
     constructed lazily. Pass ``no_llm=True`` or set ``settings.llm.enabled=False``
     to skip arbitration entirely — maybe items stay as maybe.
+
+    *progress* is an optional callback invoked with per-photo / per-phase event
+    dicts (scan / photo / dedup / arbitrate / export) so callers can stream a
+    live view of which photo is being scored and where it landed.
     """
+    def _emit(event: dict) -> None:
+        if progress is not None:
+            progress(event)
+
     folder = Path(photo_folder)
     profile = load_profile(settings.profiles_dir, profile_name)
     cfg = settings.score
@@ -243,19 +259,29 @@ def apply_to_folder(
     if profile.classifier is None and profile.taste_vector is None:
         notes.append("M1-only profile — gate-only scoring (no taste model)")
 
-    # --- Per-image features --------------------------------------------------- #
+    # --- Per-image features + live per-photo scoring -------------------------- #
     items: list[dict] = []
     sharpness: dict[str, float] = {}
     blink: dict[str, bool | None] = {}
     hashes: dict[str, int] = {}
-    for p in paths:
+    results: list[ScoreResult] = []
+    total = len(paths)
+    _emit({"phase": "scan", "n_photos": total})
+    for i, p in enumerate(paths):
         iid = p.stem
         arr = _decode_image(p)
         if arr is None:
             notes.append(f"could not decode {p.name}")
+            _emit({
+                "phase": "photo", "index": i + 1, "total": total,
+                "name": p.name, "band": None, "stars": 0, "score": None,
+                "skipped": True, "reason": "could not decode",
+            })
             continue
-        sharpness[iid] = float(sharpness_fn(arr))
-        blink[iid] = blink_fn(arr) if blink_fn is not None else None
+        sh = float(sharpness_fn(arr))
+        bl = blink_fn(arr) if blink_fn is not None else None
+        sharpness[iid] = sh
+        blink[iid] = bl
         hashes[iid] = int(hash_fn(arr))
         ex = read_exif(p)
         embedding = (
@@ -263,37 +289,45 @@ def apply_to_folder(
             if (emb is not None and profile.taste_vector is not None)
             else None
         )
-        items.append(
-            {
-                "id": iid,
-                "path": str(p),
-                "burst_id": bursts.get(str(p), 0),
-                "embedding": embedding,
-                "features": {
-                    "iso": ex.iso,
-                    "aperture_f": ex.aperture_f,
-                    "focal_length": ex.focal_length,
-                    "shutter_seconds": ex.shutter_seconds,
-                },
-            }
-        )
+        item = {
+            "id": iid,
+            "path": str(p),
+            "burst_id": bursts.get(str(p), 0),
+            "embedding": embedding,
+            "features": {
+                "iso": ex.iso,
+                "aperture_f": ex.aperture_f,
+                "focal_length": ex.focal_length,
+                "shutter_seconds": ex.shutter_seconds,
+            },
+        }
+        items.append(item)
+        # Score this single photo now so the UI can show its provisional verdict
+        # live. (Burst dedup + LLM arbitration below may still adjust a few.)
+        r = score_features(
+            items=[item],
+            sharpness={iid: sh},
+            blink={iid: bl},
+            classifier=profile.classifier,
+            taste_vector=profile.taste_vector,
+            sharpness_floor=profile.thresholds.sharpness_floor,
+            cfg=cfg,
+        )[0]
+        results.append(r)
+        _emit({
+            "phase": "photo", "index": i + 1, "total": total,
+            "name": p.name, "band": r.decision, "score": r.score,
+            "stars": _stars(r.score), "skipped": False,
+            "reason": (r.reasons[0] if r.reasons else ""),
+        })
 
-    # --- Score + dedup -------------------------------------------------------- #
-    results = score_features(
-        items=items,
-        sharpness=sharpness,
-        blink=blink,
-        classifier=profile.classifier,
-        taste_vector=profile.taste_vector,
-        sharpness_floor=profile.thresholds.sharpness_floor,
-        cfg=cfg,
-    )
+    # --- Burst dedup + gray-zone arbitration --------------------------------- #
+    _emit({"phase": "dedup"})
     results = dedup_bursts(
         results, hashes, profile.thresholds.burst_keep_rate, cfg
     )
 
-    # --- Gray-zone arbitration (M4) ------------------------------------------ #
-    # Only maybe items get sent to the LLM; keep/reject are already decided by CV+CLIP.
+    _emit({"phase": "arbitrate"})
     n_arbitrated = _arbitrate_maybe(
         results=results,
         judge=judge,
@@ -304,6 +338,7 @@ def apply_to_folder(
     )
 
     # --- Export --------------------------------------------------------------- #
+    _emit({"phase": "export"})
     preset_xmp = _first_preset_xmp(profile.preset_files)
     for r in results:
         write_sidecar(r, preset_xmp=preset_xmp)

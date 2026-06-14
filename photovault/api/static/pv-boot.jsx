@@ -104,6 +104,51 @@ window.pvLearnStream = async function (folders, name, opts, onEvent) {
   flush(buf);
 };
 
+// Run stage B with live per-photo progress (NDJSON stream). On the final
+// "done" event it populates window.SHOOT / ALL_SHOTS / BAND_COUNTS from the
+// payload so the Review grid has real tiles. Calls onEvent(ev) for each event.
+window.pvApplyStream = async function (photoFolder, name, opts, onEvent) {
+  opts = opts || {};
+  window.__LAST_FOLDER = photoFolder;
+  window.__LAST_PROFILE = name;
+  const resp = await fetch('/api/apply/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      photo_folder: photoFolder, name: name,
+      no_llm: !!opts.no_llm, sort: !!opts.sort, report: !!opts.report,
+    }),
+  });
+  if (!resp.ok || !resp.body) {
+    let detail = resp.statusText;
+    try { detail = (await resp.json()).detail || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  const handle = (line) => {
+    if (!line.trim()) return;
+    let ev;
+    try { ev = JSON.parse(line); } catch (e) { return; }
+    if (ev.phase === 'done' && ev.payload) {
+      const pl = ev.payload;
+      window.SHOOT = { name: pl.shoot.name, en: pl.shoot.en, frames: pl.shoot.frames, bursts: pl.bursts };
+      window.ALL_SHOTS = pl.frames;
+      window.BAND_COUNTS = pl.bandCounts;
+    }
+    onEvent(ev);
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+  }
+  handle(buf);
+};
+
 // Open the OS-native folder chooser (backend runs locally). Returns
 // { path: <abs|null>, supported: <bool> } — path is null on cancel/unsupported.
 window.pvPickFolder = async function () {
