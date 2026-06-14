@@ -78,7 +78,7 @@ function App() {
     switch (view) {
       case 'learn': return <LearnView accent={accent} onDone={(name) => { if (name) selectProfile(name); setView('inspector'); }} />;
       case 'inspector': return <InspectorView profile={profile} accent={accent} />;
-      case 'cull': return <CullView accent={accent} profileId={profileId} onDone={() => { bump(); setView('review'); }} />;
+      case 'cull': return <CullView accent={accent} profileId={profileId} onDone={() => { bump(); setView('review'); }} onExport={() => { bump(); setView('export'); }} />;
       case 'review': return <ReviewView accent={accent} density={t.density} showOverlay={t.showOverlay} groupBursts={t.groupBursts} />;
       case 'arbitrate': return <ArbitrateView accent={accent} />;
       case 'export': return <ExportView accent={accent} />;

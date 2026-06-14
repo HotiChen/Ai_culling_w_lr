@@ -149,6 +149,19 @@ window.pvApplyStream = async function (photoFolder, name, opts, onEvent) {
   handle(buf);
 };
 
+// Export the most recent cull (HTML report + CSV + optional foldering).
+// Returns { report?, csv?, sorted?, xmp_count }.
+window.pvExport = async function (opts) {
+  opts = opts || {};
+  return pvGetJSON('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      report: opts.report !== false, csv: opts.csv !== false, sort: !!opts.sort,
+    }),
+  });
+};
+
 // Open the OS-native folder chooser (backend runs locally). Returns
 // { path: <abs|null>, supported: <bool> } — path is null on cancel/unsupported.
 window.pvPickFolder = async function () {

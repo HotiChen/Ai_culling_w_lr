@@ -46,6 +46,7 @@ def create_app(settings: Optional[Any] = None):
     # Folder + per-path index of the most recent apply (for /api/thumb confinement).
     app.state.last_folder = None  # type: Optional[Path]
     app.state.last_paths = set()  # type: set[str]
+    app.state.last_results = []  # ScoreResults of the most recent cull (for export)
 
     def _settings():
         return app.state.settings
@@ -175,6 +176,7 @@ def create_app(settings: Optional[Any] = None):
         # /api/thumb can confine itself to them (path-traversal guard).
         app.state.last_folder = folder.resolve()
         app.state.last_paths = {str(Path(r.path).resolve()) for r in report.results}
+        app.state.last_results = report.results
 
         return mappers.apply_payload(report, folder)
 
@@ -220,7 +222,12 @@ def create_app(settings: Optional[Any] = None):
                 app.state.last_paths = {
                     str(Path(r.path).resolve()) for r in report.results
                 }
-                events.put({"phase": "done", "payload": mappers.apply_payload(report, folder)})
+                app.state.last_results = report.results
+                events.put({
+                    "phase": "done",
+                    "payload": mappers.apply_payload(report, folder),
+                    "notes": report.notes,
+                })
             except Exception as exc:
                 events.put({"phase": "error", "detail": str(exc)})
             finally:
@@ -273,6 +280,56 @@ def create_app(settings: Optional[Any] = None):
             # Pillow missing or undecodable -> serve the original bytes as a fallback.
             raise HTTPException(status_code=404, detail="cannot render thumbnail")
         return Response(content=jpeg, media_type="image/jpeg")
+
+    # ------------------------------------------------------------- export --- #
+    @app.post("/api/export")
+    async def post_export(request: Request) -> Any:
+        """Export the most recent cull: HTML report + CSV + optional foldering.
+
+        XMP sidecars are already written next to each photo at cull time; this
+        adds the review report, a decisions CSV and (optionally) keep/maybe/
+        reject subfolders. Returns the written paths.
+        """
+        from photovault.core.export import (
+            sort_into_folders,
+            write_decisions_csv,
+            write_report,
+        )
+
+        results = app.state.last_results
+        folder: Optional[Path] = app.state.last_folder
+        if not results or folder is None:
+            raise HTTPException(status_code=400, detail="run a cull first")
+
+        body = await request.json()
+        do_report = bool(body.get("report", True))
+        do_csv = bool(body.get("csv", True))
+        do_sort = bool(body.get("sort", False))
+
+        out: dict[str, Any] = {"xmp_count": len(results)}
+        if do_report:
+            out["report"] = str(write_report(results, folder / "photovault_report.html"))
+        if do_csv:
+            out["csv"] = str(write_decisions_csv(results, folder / "photovault_cull.csv"))
+        if do_sort:
+            sort_into_folders(results, folder / "sorted")
+            out["sorted"] = str(folder / "sorted")
+        return out
+
+    @app.get("/api/export/download")
+    def export_download(kind: str = Query(...)):
+        """Download a generated export file (report | csv) from the last folder."""
+        folder: Optional[Path] = app.state.last_folder
+        if folder is None:
+            raise HTTPException(status_code=404, detail="no cull yet")
+        names = {"report": "photovault_report.html", "csv": "photovault_cull.csv"}
+        if kind not in names:
+            raise HTTPException(status_code=400, detail="kind must be report or csv")
+        target = (folder / names[kind]).resolve()
+        if not _is_within(target, folder) or not target.is_file():
+            raise HTTPException(status_code=404, detail="not generated yet — export first")
+        media = "text/html" if kind == "report" else "text/csv"
+        return FileResponse(str(target), media_type=media, filename=target.name)
 
     # --------------------------------------------------------------- static --- #
     # Mount the React SPA assets (jsx/js/css/png). The index is served at "/".

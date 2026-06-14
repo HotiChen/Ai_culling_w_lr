@@ -3,7 +3,7 @@
 const BAND_COLOR = { keep: 'var(--keep)', maybe: 'var(--maybe)', reject: 'var(--reject)' };
 
 // ── Stage B: drop a new shoot folder & run the cull ──────────────────
-function CullView({ accent, onDone, profileId }) {
+function CullView({ accent, onDone, onExport, profileId }) {
   const [phase, setPhase] = React.useState('drop');
   // M5: a click opens a native OS folder chooser (/api/pick-folder); the user
   // never types a path. Manual entry stays as a fallback where no picker exists.
@@ -15,7 +15,9 @@ function CullView({ accent, onDone, profileId }) {
   const [prog, setProg] = React.useState({ pct: 0, label: '', name: '', index: 0, total: 0 });
   const [cur, setCur] = React.useState(null);  // current photo event
   const [tally, setTally] = React.useState({ keep: 0, maybe: 0, reject: 0 });
-  const [recent, setRecent] = React.useState([]);  // last few photos
+  const [recent, setRecent] = React.useState([]);  // last few photos (running view)
+  const [allPhotos, setAllPhotos] = React.useState([]);  // every photo (done view)
+  const [summary, setSummary] = React.useState(null);  // final bandCounts + notes
 
   const pickFolder = async () => {
     setError(null); setPicking(true);
@@ -33,8 +35,10 @@ function CullView({ accent, onDone, profileId }) {
     setError(null); setPhase('running');
     setProg({ pct: 2, label: PHASE_LABEL.scan, name: '', index: 0, total: 0 });
     setCur(null); setTally({ keep: 0, maybe: 0, reject: 0 }); setRecent([]);
+    setAllPhotos([]); setSummary(null);
     let keep = 0, maybe = 0, reject = 0;
     const rec = [];
+    const all = [];
     window.pvApplyStream(folder, profileId, { no_llm: true }, (ev) => {
       if (ev.phase === 'scan') {
         setProg((p) => ({ ...p, label: PHASE_LABEL.scan, total: ev.n_photos }));
@@ -48,6 +52,7 @@ function CullView({ accent, onDone, profileId }) {
         setTally({ keep, maybe, reject });
         rec.unshift(ev); if (rec.length > 6) rec.pop();
         setRecent([...rec]);
+        all.push(ev); setAllPhotos([...all]);
         setProg({
           label: '逐張評分', name: ev.name, index: ev.index, total: ev.total,
           pct: Math.round((ev.index / Math.max(1, ev.total)) * 88),
@@ -56,7 +61,10 @@ function CullView({ accent, onDone, profileId }) {
         setProg((p) => ({ ...p, label: PHASE_LABEL[ev.phase], pct: ev.phase === 'export' ? 98 : Math.max(p.pct, 90) }));
       } else if (ev.phase === 'done') {
         setProg((p) => ({ ...p, pct: 100 }));
-        setTimeout(() => onDone(), 250);
+        // Don't auto-jump — stop on a summary screen so the workflow stays visible.
+        const counts = (ev.payload && ev.payload.bandCounts) || { keep, maybe, reject, total: all.length };
+        setSummary({ counts: counts, notes: ev.notes || [] });
+        setPhase('done');
       } else if (ev.phase === 'error') {
         setError(ev.detail || 'cull failed'); setPhase('drop');
       }
@@ -115,6 +123,54 @@ function CullView({ accent, onDone, profileId }) {
       <span className="mono" style={{ width: 38, textAlign: 'right', fontSize: big ? 12 : 11, color: BAND_COLOR[ev.band] || 'var(--ink-3)' }}>{fmtScore(ev.score)}</span>
     </div>
   );
+
+  // ── done: completion summary + full workflow log (does NOT auto-jump) ──
+  if (phase === 'done') {
+    const c = (summary && summary.counts) || { keep: 0, maybe: 0, reject: 0, total: allPhotos.length };
+    return (
+      <div className="page fade-in" style={{ maxWidth: 820 }}>
+        <div className="section-head"><h2>選片完成</h2><span className="hint">{window.__LAST_FOLDER || ''}</span></div>
+        <div className="grid-stats" style={{ marginBottom: 18 }}>
+          <Stat v={c.total} label="總張數" en="frames" />
+          <Stat v={c.keep} label="留 · keep" en="picked" color="var(--keep)" />
+          <Stat v={c.maybe} label="待定 · maybe" en="gray-zone" color="var(--maybe)" />
+          <Stat v={c.reject} label="淘汰 · reject" en="culled" color="var(--reject)" />
+        </div>
+
+        <div className="row gap12" style={{ marginBottom: 16 }}>
+          <Btn primary icon="review" onClick={() => onDone()}>前往審片 · Review</Btn>
+          <Btn icon="export" onClick={() => onExport && onExport()}>匯出 · Export</Btn>
+          <Btn ghost icon="refresh" onClick={() => { setPhase('drop'); setCur(null); }}>重新選片</Btn>
+        </div>
+
+        {summary && summary.notes && summary.notes.length > 0 && (
+          <div className="card pad" style={{ marginBottom: 16 }}>
+            <div className="h-title" style={{ marginBottom: 8 }}>處理訊息 · notes</div>
+            {summary.notes.map((n, i) => (
+              <div key={i} className="row gap8" style={{ alignItems: 'center', fontSize: 12 }}>
+                <Icon name="info" s={13} style={{ color: 'var(--maybe)', flexShrink: 0 }} />
+                <span className="muted mono" style={{ wordBreak: 'break-all' }}>{n}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="card pad">
+          <div className="h-title" style={{ marginBottom: 6 }}>
+            工作流程 · 每張判定 <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· {allPhotos.length} 張</span>
+          </div>
+          <div className="col" style={{ gap: 0, maxHeight: 360, overflowY: 'auto' }}>
+            {allPhotos.map((ev, i) => (
+              <div key={ev.name + i} style={{ borderTop: i ? '1px solid var(--line)' : 'none' }}>
+                <PhotoRow ev={ev} />
+                {ev.reason && <div className="muted mono" style={{ fontSize: 10.5, paddingLeft: 26, paddingBottom: 6, color: 'var(--ink-3)' }}>{ev.reason}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page fade-in" style={{ maxWidth: 760 }}>
@@ -366,23 +422,22 @@ function ArbitrateView({ accent }) {
 
 // ── Export — .lrcat catalog or XMP sidecars ──────────────────────────
 function ExportView({ accent }) {
-  const [target, setTarget] = React.useState('lrcat');
-  const [done, setDone] = React.useState(false);
+  const [target, setTarget] = React.useState('xmp');
+  const [result, setResult] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [opts, setOpts] = React.useState({ ratings: true, flags: true, foldering: true, report: true });
   const c = window.BAND_COUNTS;
   const toggle = (k) => setOpts(o => ({ ...o, [k]: !o[k] }));
 
-  // M5 real export: XMP sidecars are ALWAYS written by apply_to_folder; here we
-  // re-run apply with the chosen foldering / HTML-report options so the on-disk
-  // outputs match the toggles. (A native .lrcat writer is a later milestone.)
+  // M5 real export: XMP sidecars are already written next to each photo at cull
+  // time; this writes the HTML report + a decisions CSV (+ optional foldering)
+  // from the cached results — no re-cull. (Native .lrcat is a later milestone.)
   const runExport = () => {
-    const folder = window.__LAST_FOLDER, profile = window.__LAST_PROFILE;
-    if (!folder || !profile) { setError('尚未執行選片，無可匯出的結果'); return; }
+    if (!window.__LAST_FOLDER) { setError('尚未執行選片，無可匯出的結果'); return; }
     setError(null); setBusy(true);
-    window.pvApply(folder, profile, { no_llm: true, sort: !!opts.foldering, report: !!opts.report })
-      .then(() => { setBusy(false); setDone(true); })
+    window.pvExport({ report: !!opts.report, csv: true, sort: !!opts.foldering })
+      .then((res) => { setBusy(false); setResult(res); })
       .catch((e) => { setBusy(false); setError(String(e.message || e)); });
   };
 
@@ -412,17 +467,31 @@ function ExportView({ accent }) {
     </div>
   );
 
-  if (done) {
+  if (result) {
     return (
       <div className="page fade-in" style={{ maxWidth: 640 }}>
-        <div className="card pad" style={{ textAlign: 'center', padding: '40px 30px' }}>
-          <div style={{ width: 60, height: 60, borderRadius: 16, margin: '0 auto 18px', background: 'var(--keep-soft)', color: 'var(--keep)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="check" s={30} w={2.4} /></div>
-          <h2 style={{ fontSize: 19 }}>{target === 'lrcat' ? '已產出 Lightroom 編目檔' : '已寫入 XMP sidecar'}</h2>
-          <p className="muted mono" style={{ marginTop: 10, fontSize: 12.5 }}>
-            {target === 'lrcat' ? '~/Pictures/外拍_2026-06-12_culled.lrcat' : '36 × .xmp sidecars · keep/ maybe/ reject/ 子資料夾'}
+        <div className="card pad" style={{ textAlign: 'center', padding: '36px 30px' }}>
+          <div style={{ width: 60, height: 60, borderRadius: 16, margin: '0 auto 16px', background: 'var(--keep-soft)', color: 'var(--keep)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="check" s={30} w={2.4} /></div>
+          <h2 style={{ fontSize: 19 }}>已匯出選片結果</h2>
+          <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+            {result.xmp_count} 張已寫入 XMP sidecar(就在每張照片旁),import 進 Lightroom 即帶星等與旗標。
           </p>
-          <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>{c.keep} 張已選、已預調，直接在 Lightroom 開啟即可。</p>
-          <Btn primary icon="export" style={{ marginTop: 22 }} onClick={() => setDone(false)}>再次匯出 · Export again</Btn>
+          <div className="col gap8" style={{ marginTop: 20, textAlign: 'left' }}>
+            <a className="btn primary" href="/api/export/download?kind=csv" target="_blank" rel="noreferrer" style={{ justifyContent: 'center' }}>
+              <Icon name="export" s={16} /> 下載 CSV(每張判定)
+            </a>
+            {result.report && (
+              <a className="btn" href="/api/export/download?kind=report" target="_blank" rel="noreferrer" style={{ justifyContent: 'center' }}>
+                <Icon name="image" s={16} /> 開啟 HTML 審片報告
+              </a>
+            )}
+          </div>
+          <div className="col gap4" style={{ marginTop: 16, textAlign: 'left' }}>
+            {result.csv && <div className="muted mono" style={{ fontSize: 10.5, wordBreak: 'break-all' }}>CSV：{result.csv}</div>}
+            {result.report && <div className="muted mono" style={{ fontSize: 10.5, wordBreak: 'break-all' }}>報告：{result.report}</div>}
+            {result.sorted && <div className="muted mono" style={{ fontSize: 10.5, wordBreak: 'break-all' }}>分流：{result.sorted}</div>}
+          </div>
+          <Btn primary icon="export" style={{ marginTop: 22 }} onClick={() => setResult(null)}>再次匯出 · Export again</Btn>
         </div>
       </div>
     );

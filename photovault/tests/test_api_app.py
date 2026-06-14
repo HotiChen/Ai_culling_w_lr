@@ -247,6 +247,42 @@ def test_apply_stream_emits_photos_and_done(settings: Settings, learned_profile:
     assert done["payload"]["bandCounts"]["total"] == 6
 
 
+def test_export_requires_prior_cull(client: TestClient):
+    r = client.post("/api/export", json={})
+    assert r.status_code == 400
+
+
+def test_export_writes_report_csv_and_downloads(settings: Settings, learned_profile: str, new_photos: Path):
+    client = TestClient(create_app(settings=settings))
+    # A cull populates app.state with the results to export.
+    a = client.post("/api/apply", json={"photo_folder": str(new_photos), "name": learned_profile, "no_llm": True})
+    assert a.status_code == 200
+
+    r = client.post("/api/export", json={"report": True, "csv": True, "sort": True})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["xmp_count"] == 6
+    assert Path(body["csv"]).exists() and Path(body["report"]).exists()
+    assert Path(body["sorted"]).is_dir()
+
+    # CSV is downloadable and has a row per photo.
+    d = client.get("/api/export/download", params={"kind": "csv"})
+    assert d.status_code == 200
+    assert "text/csv" in d.headers["content-type"]
+    assert d.text.count("\n") >= 6  # header + 6 rows
+
+    rep = client.get("/api/export/download", params={"kind": "report"})
+    assert rep.status_code == 200 and "text/html" in rep.headers["content-type"]
+
+
+def test_export_download_before_export_404(settings: Settings, learned_profile: str, new_photos: Path):
+    client = TestClient(create_app(settings=settings))
+    client.post("/api/apply", json={"photo_folder": str(new_photos), "name": learned_profile, "no_llm": True})
+    # Apply writes the report by default? No — apply here used report default False.
+    r = client.get("/api/export/download", params={"kind": "csv"})
+    assert r.status_code == 404  # CSV not generated until /api/export
+
+
 def test_pick_folder_returns_dialog_path(client: TestClient, monkeypatch):
     # The native dialog is mocked (no real Finder in CI / on Linux).
     import photovault.api.app as appmod
