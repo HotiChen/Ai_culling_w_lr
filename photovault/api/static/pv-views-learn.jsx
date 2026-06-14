@@ -172,6 +172,9 @@ function LearnView({ accent, onDone }) {
         <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
           {report ? `${report.n_images.toLocaleString()} 樣本 · ${report.n_presets} 個 preset · ${report.n_keepers} keep / ${report.n_rejects} reject` : ''}
         </p>
+        {report && report.log && report.log.length > 0 && (
+          <p className="muted mono" style={{ marginTop: 6, fontSize: 11.5, color: 'var(--ink-3)' }}>{report.log[0]}</p>
+        )}
         <div className="grid-stats mt24" style={{ textAlign: 'left' }}>
           <Stat v={report ? report.n_catalogs : '—'} label="採用編目檔" en="catalogs" />
           <Stat v={report ? report.n_skipped : '—'} label="跳過編目檔" en="skipped" color={report && report.n_skipped ? 'var(--maybe)' : undefined} />

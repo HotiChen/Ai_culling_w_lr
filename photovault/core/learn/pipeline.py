@@ -18,6 +18,7 @@ from photovault.core.catalog.labels import LabelRow, build_rows, write_csv
 from photovault.core.catalog.reader import (
     CatalogImage,
     find_catalogs,
+    find_icloud_lrcat_placeholders,
     iter_images,
     open_ro,
 )
@@ -139,6 +140,23 @@ def collect_catalogs(catalog_folder: "str | Path | list") -> list[Path]:
                 seen.add(resolved)
                 catalogs.append(cat)
     return catalogs
+
+
+def collect_icloud_placeholders(catalog_folder: "str | Path | list") -> list[Path]:
+    """iCloud-evicted ``.lrcat`` placeholders under one or more roots (deduped)."""
+    if isinstance(catalog_folder, (str, Path)):
+        roots: list = [catalog_folder]
+    else:
+        roots = list(catalog_folder)
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        for ph in find_icloud_lrcat_placeholders(root):
+            resolved = ph.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                out.append(ph)
+    return out
 
 
 def _decode_preview(data: bytes) -> np.ndarray | None:
@@ -266,18 +284,37 @@ def learn_from_folder(
     explicit object (e.g. a FakeJudge) to avoid any network calls in tests.
     """
     catalogs = collect_catalogs(catalog_folder)
-    if not catalogs:
+    icloud = collect_icloud_placeholders(catalog_folder)
+    if not catalogs and not icloud:
         raise ValueError(f"no .lrcat files found under {catalog_folder}")
+
+    # Scan summary first so the user can see every subfolder was covered.
+    log: list[str] = [
+        f"scanned {len(catalogs)} .lrcat across all subfolders"
+        + (f"; {len(icloud)} more are in iCloud (not downloaded)" if icloud else "")
+    ]
 
     # Skip catalogs with no curation signal (no picks/ratings/colors), logging each.
     images, kept_catalogs, skipped = read_catalogs_filtered(catalogs)
-    log: list[str] = []
     for cat, reason in skipped:
         log.append(f"skipped {cat.name} — {reason}")
+
+    # iCloud-evicted catalogs can't be opened; surface them as skipped too.
+    for ph in icloud:
+        original = ph.name.lstrip(".")[: -len(".icloud")]
+        skipped.append((ph, "in iCloud — not downloaded to this Mac"))
+        log.append(f"skipped {original} — in iCloud; download it then re-learn")
+
     if not images:
+        extra = (
+            f" ({len(icloud)} catalog(s) are in iCloud and not downloaded — "
+            "download them or turn off 'Optimize Mac Storage', then re-learn)"
+            if icloud
+            else ""
+        )
         raise ValueError(
             "every catalog was skipped (no picks / star ratings / color labels); "
-            "nothing to learn from"
+            "nothing to learn from" + extra
         )
 
     # L2 stats + labels.

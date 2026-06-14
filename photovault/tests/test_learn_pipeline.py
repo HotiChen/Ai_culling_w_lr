@@ -84,6 +84,18 @@ def test_learn_skips_unlabeled_catalog_and_logs(catalog_folder: Path, settings: 
     assert report.skipped[0]["reason"]
 
 
+def test_learn_reports_icloud_placeholders(catalog_folder: Path, settings: Settings, tmp_path: Path):
+    # A root holding an iCloud-evicted catalog placeholder (not openable).
+    root = tmp_path / "icloudroot"
+    root.mkdir()
+    (root / ".Wedding.lrcat.icloud").write_bytes(b"")
+
+    report = learn_from_folder([catalog_folder, root], "mix", settings, use_llm=False)
+    assert report.n_catalogs == 1  # only the real downloaded catalog learned
+    assert any("iCloud" in line for line in report.log)
+    assert any("iCloud" in s["reason"] for s in report.skipped)
+
+
 def test_learn_all_skipped_raises(settings: Settings, tmp_path: Path):
     from photovault.tests.make_fake import FakeImage, write_catalog
 

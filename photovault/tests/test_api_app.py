@@ -183,7 +183,7 @@ def test_learn_response_includes_skip_log(settings: Settings, catalog_folder: Pa
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["n_skipped"] == 1
-    assert body["log"] and "blank.lrcat" in body["log"][0]
+    assert any("blank.lrcat" in line for line in body["log"])
 
 
 def test_pick_folder_returns_dialog_path(client: TestClient, monkeypatch):

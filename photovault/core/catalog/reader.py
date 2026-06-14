@@ -12,6 +12,7 @@ is missing.
 from __future__ import annotations
 
 import math
+import os
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -38,11 +39,43 @@ def open_ro(catalog_path: str | Path) -> sqlite3.Connection:
 
 
 def find_catalogs(folder: str | Path) -> list[Path]:
-    """Recursively find ``.lrcat`` files under *folder*, sorted by path."""
+    """Recursively find ``.lrcat`` files under *folder* (every subfolder), sorted.
+
+    Uses ``os.walk`` (not ``rglob``) so a single unreadable subdirectory can't
+    abort the whole scan — such directories are skipped silently.
+    """
     root = Path(folder)
     if not root.exists():
         raise FileNotFoundError(f"folder not found: {root}")
-    return sorted(p for p in root.rglob("*.lrcat") if p.is_file())
+    out: list[Path] = []
+    for dirpath, _dirnames, filenames in os.walk(root, onerror=lambda _e: None):
+        for fn in filenames:
+            if fn.lower().endswith(".lrcat"):
+                out.append(Path(dirpath) / fn)
+    return sorted(out)
+
+
+def find_icloud_lrcat_placeholders(folder: str | Path) -> list[Path]:
+    """Find iCloud-evicted ``.lrcat`` placeholders under *folder*.
+
+    When "Optimize Mac Storage" evicts a file ``Foo.lrcat`` it leaves a hidden
+    placeholder ``.Foo.lrcat.icloud`` on disk; the real bytes live only in
+    iCloud. These are NOT openable, so learning skips them — but we surface them
+    so the user knows to download the catalogs and re-learn.
+    """
+    root = Path(folder)
+    if not root.exists():
+        return []
+    out: list[Path] = []
+    for dirpath, _dirnames, filenames in os.walk(root, onerror=lambda _e: None):
+        for fn in filenames:
+            if not fn.endswith(".icloud"):
+                continue
+            original = fn[1:] if fn.startswith(".") else fn
+            original = original[: -len(".icloud")]
+            if original.lower().endswith(".lrcat"):
+                out.append(Path(dirpath) / fn)
+    return sorted(out)
 
 
 def table_exists(conn: sqlite3.Connection, table: str) -> bool:

@@ -28,6 +28,32 @@ def test_find_catalogs_missing_folder(tmp_path: Path):
         find_catalogs(tmp_path / "nope")
 
 
+def test_find_catalogs_recurses_all_subfolders(tmp_path: Path):
+    # .lrcat files nested several levels deep, in multiple sibling subfolders.
+    (tmp_path / "a" / "deep").mkdir(parents=True)
+    (tmp_path / "b").mkdir()
+    (tmp_path / "a" / "deep" / "one.lrcat").write_bytes(b"")
+    (tmp_path / "b" / "two.lrcat").write_bytes(b"")
+    (tmp_path / "top.lrcat").write_bytes(b"")
+    found = {p.name for p in find_catalogs(tmp_path)}
+    assert found == {"one.lrcat", "two.lrcat", "top.lrcat"}
+
+
+def test_find_icloud_placeholders(tmp_path: Path):
+    from photovault.core.catalog.reader import find_icloud_lrcat_placeholders
+
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    # An evicted catalog placeholder + a normal downloaded one + unrelated icloud.
+    (sub / ".Shoot.lrcat.icloud").write_bytes(b"")
+    (sub / "Real.lrcat").write_bytes(b"")
+    (sub / ".Photo.jpg.icloud").write_bytes(b"")
+    placeholders = [p.name for p in find_icloud_lrcat_placeholders(tmp_path)]
+    assert placeholders == [".Shoot.lrcat.icloud"]
+    # The real .lrcat is found by the normal scan; the placeholder is not.
+    assert {p.name for p in find_catalogs(tmp_path)} == {"Real.lrcat"}
+
+
 def test_open_ro_missing_file(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         open_ro(tmp_path / "missing.lrcat")
