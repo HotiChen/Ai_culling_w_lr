@@ -25,7 +25,13 @@ def create_app(settings: Optional[Any] = None):
     the process-wide settings are read via ``get_settings``.
     """
     from fastapi import FastAPI, HTTPException, Query, Request
-    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+    from fastapi.responses import (
+        FileResponse,
+        HTMLResponse,
+        JSONResponse,
+        Response,
+        StreamingResponse,
+    )
     from fastapi.staticfiles import StaticFiles
 
     from photovault.core.profile.store import load_profile, profile_exists
@@ -87,23 +93,60 @@ def create_app(settings: Optional[Any] = None):
             )
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        return {
-            "name": report.name,
-            "profile_dir": str(report.profile_dir),
-            "n_catalogs": report.n_catalogs,
-            "n_images": report.n_images,
-            "n_keepers": report.n_keepers,
-            "n_rejects": report.n_rejects,
-            "n_presets": report.n_presets,
-            "llm_used": report.llm_used,
-            "llm_note": report.llm_note,
-            "pixels_used": report.pixels_used,
-            "n_embedded": report.n_embedded,
-            "pixels_note": report.pixels_note,
-            "n_skipped": report.n_skipped,
-            "skipped": report.skipped,
-            "log": report.log,
-        }
+        return _learn_report_json(report)
+
+    @app.post("/api/learn/stream")
+    async def post_learn_stream(request: Request):
+        """Run learn while streaming live progress as newline-delimited JSON.
+
+        Each line is one event: ``scan`` (catalog count), ``catalog`` (per-file
+        name + star/color histogram + kept/skip), ``stats`` / ``style`` /
+        ``gemma`` / ``save`` phases, then ``done`` (full report) or ``error``.
+        The learn runs in a worker thread; events flow through a queue so the
+        UI updates as each catalog is read.
+        """
+        import json
+        import queue
+        import threading
+
+        from photovault.core.learn import learn_from_folder
+
+        body = await request.json()
+        folders = body.get("catalog_folders")
+        if not folders:
+            single = body.get("catalog_folder")
+            folders = [single] if single else []
+        folders = [f for f in folders if f]
+        if not folders:
+            raise HTTPException(status_code=400, detail="catalog_folders required")
+        name = (body.get("name") or "").strip() or (Path(folders[0]).name or "profile")
+        no_llm = bool(body.get("no_llm", False))
+        s = _settings()
+
+        events: "queue.Queue" = queue.Queue()
+        sentinel = object()
+
+        def run() -> None:
+            try:
+                report = learn_from_folder(
+                    folders, name, s, use_llm=not no_llm, progress=events.put
+                )
+                events.put({"phase": "done", "report": _learn_report_json(report)})
+            except Exception as exc:  # surface any failure to the client
+                events.put({"phase": "error", "detail": str(exc)})
+            finally:
+                events.put(sentinel)
+
+        threading.Thread(target=run, daemon=True).start()
+
+        def emit():
+            while True:
+                ev = events.get()
+                if ev is sentinel:
+                    break
+                yield json.dumps(ev, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(emit(), media_type="application/x-ndjson")
 
     @app.post("/api/apply")
     async def post_apply(request: Request) -> Any:
@@ -212,6 +255,28 @@ def _is_within(child: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _learn_report_json(report: Any) -> dict:
+    """Serialize a LearnReport to the JSON the UI consumes (shared by both
+    the blocking and streaming learn endpoints)."""
+    return {
+        "name": report.name,
+        "profile_dir": str(report.profile_dir),
+        "n_catalogs": report.n_catalogs,
+        "n_images": report.n_images,
+        "n_keepers": report.n_keepers,
+        "n_rejects": report.n_rejects,
+        "n_presets": report.n_presets,
+        "llm_used": report.llm_used,
+        "llm_note": report.llm_note,
+        "pixels_used": report.pixels_used,
+        "n_embedded": report.n_embedded,
+        "pixels_note": report.pixels_note,
+        "n_skipped": report.n_skipped,
+        "skipped": report.skipped,
+        "log": report.log,
+    }
 
 
 def _picker_supported() -> bool:

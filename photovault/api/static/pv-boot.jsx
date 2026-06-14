@@ -71,6 +71,39 @@ window.pvLearn = async function (folders, name, opts) {
   });
 };
 
+// Run stage A with live progress: POSTs to the NDJSON stream and calls
+// onEvent(ev) for each progress event (scan / catalog / stats / style / gemma /
+// save / done / error). Resolves when the stream ends.
+window.pvLearnStream = async function (folders, name, opts, onEvent) {
+  opts = opts || {};
+  const list = Array.isArray(folders) ? folders : [folders];
+  const resp = await fetch('/api/learn/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ catalog_folders: list, name: name, no_llm: !!opts.no_llm }),
+  });
+  if (!resp.ok || !resp.body) {
+    let detail = resp.statusText;
+    try { detail = (await resp.json()).detail || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  const flush = (line) => { if (line.trim()) { try { onEvent(JSON.parse(line)); } catch (e) {} } };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      flush(buf.slice(0, nl));
+      buf = buf.slice(nl + 1);
+    }
+  }
+  flush(buf);
+};
+
 // Open the OS-native folder chooser (backend runs locally). Returns
 // { path: <abs|null>, supported: <bool> } — path is null on cancel/unsupported.
 window.pvPickFolder = async function () {

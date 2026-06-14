@@ -109,6 +109,25 @@ def test_learn_all_skipped_raises(settings: Settings, tmp_path: Path):
         learn_from_folder(root, "x", settings, use_llm=False)
 
 
+def test_learn_progress_events(catalog_folder: Path, settings: Settings):
+    events: list = []
+    learn_from_folder(catalog_folder, "p", settings, use_llm=False, progress=events.append)
+
+    phases = [e["phase"] for e in events]
+    assert "scan" in phases
+    assert "save" in phases
+
+    cat_events = [e for e in events if e["phase"] == "catalog"]
+    assert len(cat_events) == 1
+    ce = cat_events[0]
+    assert ce["name"] == "shoot.lrcat"
+    assert ce["index"] == 1 and ce["total"] == 1
+    assert ce["kept"] is True
+    # default_images() has 4-star keepers and an explicit reject flag.
+    assert ce["stats"]["ratings"][4] >= 1
+    assert ce["stats"]["n_images"] == 11
+
+
 def test_learn_end_to_end(catalog_folder: Path, settings: Settings):
     report = learn_from_folder(catalog_folder, "熱茶", settings, use_llm=False)
 

@@ -91,31 +91,75 @@ def has_curation_signal(images: list[CatalogImage]) -> bool:
     return False
 
 
+def catalog_label_stats(images: list[CatalogImage]) -> dict:
+    """Per-catalog curation breakdown: star ratings, color labels, pick flags."""
+    ratings = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    colors: dict[str, int] = {}
+    flags = 0
+    rejects = 0
+    for im in images:
+        r = im.rating or 0
+        ratings[r if r in ratings else 0] += 1
+        if im.color_label:
+            colors[im.color_label] = colors.get(im.color_label, 0) + 1
+        if im.pick == 1:
+            flags += 1
+        elif im.pick == -1:
+            rejects += 1
+    return {
+        "ratings": ratings,
+        "colors": colors,
+        "flags": flags,
+        "rejects": rejects,
+        "n_images": len(images),
+    }
+
+
 def read_catalogs_filtered(
     catalogs: list[Path],
+    progress=None,
 ) -> tuple[list[CatalogImage], list[Path], list[tuple[Path, str]]]:
     """Read images per catalog, skipping ones with no curation signal.
 
     Returns ``(images, kept_catalogs, skipped)`` where *skipped* is a list of
-    ``(catalog_path, reason)`` for catalogs that were left out.
+    ``(catalog_path, reason)`` for catalogs that were left out. If *progress* is
+    given it is called once per catalog with a dict describing the catalog just
+    read (name, label histogram, kept/skip decision) so callers can stream live
+    progress.
     """
     images: list[CatalogImage] = []
     kept: list[Path] = []
     skipped: list[tuple[Path, str]] = []
-    for cat in catalogs:
+    total = len(catalogs)
+    for i, cat in enumerate(catalogs):
         conn = open_ro(cat)
         try:
             cat_images = list(iter_images(conn))
         finally:
             conn.close()
+        stats = catalog_label_stats(cat_images)
         if not cat_images:
-            skipped.append((cat, "no images"))
-            continue
-        if not has_curation_signal(cat_images):
-            skipped.append((cat, "no picks / star ratings / color labels"))
-            continue
-        images.extend(cat_images)
-        kept.append(cat)
+            decision, reason = False, "no images"
+            skipped.append((cat, reason))
+        elif not has_curation_signal(cat_images):
+            decision, reason = False, "no picks / star ratings / color labels"
+            skipped.append((cat, reason))
+        else:
+            decision, reason = True, ""
+            images.extend(cat_images)
+            kept.append(cat)
+        if progress is not None:
+            progress({
+                "phase": "catalog",
+                "index": i + 1,
+                "total": total,
+                "name": cat.name,
+                "path": str(cat),
+                "kept": decision,
+                "reason": reason,
+                "stats": stats,
+                "running_images": len(images),
+            })
     return images, kept, skipped
 
 
@@ -272,6 +316,7 @@ def learn_from_folder(
     preview_cache: str | Path | None = None,
     embedder: Embedder | None = None,
     judge=None,
+    progress=None,
 ) -> LearnReport:
     """Run stage A and persist the profile. Returns a :class:`LearnReport`.
 
@@ -283,6 +328,10 @@ def learn_from_folder(
     enabled, a real :class:`GemmaJudge` is constructed lazily.  Pass an
     explicit object (e.g. a FakeJudge) to avoid any network calls in tests.
     """
+    def _emit(event: dict) -> None:
+        if progress is not None:
+            progress(event)
+
     catalogs = collect_catalogs(catalog_folder)
     icloud = collect_icloud_placeholders(catalog_folder)
     if not catalogs and not icloud:
@@ -293,9 +342,10 @@ def learn_from_folder(
         f"scanned {len(catalogs)} .lrcat across all subfolders"
         + (f"; {len(icloud)} more are in iCloud (not downloaded)" if icloud else "")
     ]
+    _emit({"phase": "scan", "n_catalogs": len(catalogs), "n_icloud": len(icloud)})
 
     # Skip catalogs with no curation signal (no picks/ratings/colors), logging each.
-    images, kept_catalogs, skipped = read_catalogs_filtered(catalogs)
+    images, kept_catalogs, skipped = read_catalogs_filtered(catalogs, progress=progress)
     for cat, reason in skipped:
         log.append(f"skipped {cat.name} — {reason}")
 
@@ -318,12 +368,14 @@ def learn_from_folder(
         )
 
     # L2 stats + labels.
+    _emit({"phase": "stats", "n_images": len(images)})
     stats = compute_stats(images, settings.cull)
     rows = build_rows(images, settings.cull)
     n_keepers = sum(1 for r in rows if r.label == Label.KEEP.value)
     n_rejects = sum(1 for r in rows if r.label == Label.REJECT.value)
 
     # L1 style presets.
+    _emit({"phase": "style"})
     style = extract_style(images, settings.style)
 
     # Build persisted models.
@@ -354,6 +406,7 @@ def learn_from_folder(
     llm_used = False
     llm_note = ""
     if use_llm and settings.llm.enabled:
+        _emit({"phase": "gemma"})
         active_judge = judge if judge is not None else GemmaJudge(settings.llm)
         try:
             llm_stats = {**summary, "presets": [p.params for p in style.presets]}
@@ -385,6 +438,7 @@ def learn_from_folder(
                     thresholds.sharpness_floor = pixel.sharpness_floor
 
     # Write labels CSV to a temp file, then fold into the profile bundle.
+    _emit({"phase": "save"})
     with tempfile.TemporaryDirectory() as tmp:
         csv_path = write_csv(rows, Path(tmp) / "labels.csv")
         profile_dir = save_profile(

@@ -186,6 +186,44 @@ def test_learn_response_includes_skip_log(settings: Settings, catalog_folder: Pa
     assert any("blank.lrcat" in line for line in body["log"])
 
 
+def test_learn_stream_emits_progress_and_done(settings: Settings, catalog_folder: Path):
+    import json
+
+    client = TestClient(create_app(settings=settings))
+    events = []
+    with client.stream(
+        "POST",
+        "/api/learn/stream",
+        json={"catalog_folders": [str(catalog_folder)], "no_llm": True},
+    ) as r:
+        assert r.status_code == 200
+        for line in r.iter_lines():
+            if line.strip():
+                events.append(json.loads(line))
+
+    phases = [e["phase"] for e in events]
+    assert "scan" in phases and "catalog" in phases and "done" in phases
+    cat = next(e for e in events if e["phase"] == "catalog")
+    assert cat["name"] == "shoot.lrcat" and "ratings" in cat["stats"]
+    done = next(e for e in events if e["phase"] == "done")
+    assert done["report"]["name"] == catalog_folder.name
+
+
+def test_learn_stream_error_event(client: TestClient, tmp_path: Path):
+    import json
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    events = []
+    with client.stream(
+        "POST", "/api/learn/stream", json={"catalog_folders": [str(empty)]}
+    ) as r:
+        for line in r.iter_lines():
+            if line.strip():
+                events.append(json.loads(line))
+    assert any(e["phase"] == "error" for e in events)
+
+
 def test_pick_folder_returns_dialog_path(client: TestClient, monkeypatch):
     # The native dialog is mocked (no real Finder in CI / on Linux).
     import photovault.api.app as appmod

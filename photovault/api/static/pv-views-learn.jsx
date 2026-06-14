@@ -11,12 +11,12 @@ function LearnView({ accent, onDone }) {
   const [picking, setPicking] = React.useState(false);
   const [pickerSupported, setPickerSupported] = React.useState(true);
   const [manual, setManual] = React.useState('');
-  const [step, setStep] = React.useState(-1);
-  const [pct, setPct] = React.useState(0);
   const [error, setError] = React.useState(null);
   const [report, setReport] = React.useState(null);
-  const steps = window.LEARN_STEPS;
-  const timer = React.useRef(null);
+  // Live learning progress (driven by the /api/learn/stream NDJSON events).
+  const [prog, setProg] = React.useState({ pct: 0, label: '', name: '', index: 0, total: 0 });
+  const [cur, setCur] = React.useState(null);    // current catalog event
+  const [tally, setTally] = React.useState({ kept: 0, skipped: 0, images: 0 });
 
   const addFolder = async () => {
     setError(null); setPicking(true);
@@ -45,22 +45,38 @@ function LearnView({ accent, onDone }) {
     return parts[parts.length - 1] || '';
   };
 
-  // Run the REAL learn (POST /api/learn) while the cosmetic progress animates.
+  // Run the REAL learn, streaming live per-catalog progress.
+  const PHASE_LABEL = {
+    scan: '掃描編目檔', stats: '計算選片統計', style: '風格分群 → presets',
+    gemma: 'Gemma 寫規則書', save: '儲存品味檔案',
+  };
   const start = () => {
     if (!folders.length) { setError('請至少加入一個資料夾'); return; }
-    setError(null);
-    setPhase('running'); setStep(0); setPct(0);
-    let i = 0;
-    timer.current = setInterval(() => {
-      i += 1;
-      if (i >= steps.length - 1) { setStep(steps.length - 1); setPct(95); clearInterval(timer.current); }
-      else { setStep(i); setPct(Math.round(i / steps.length * 100)); }
-    }, 600);
-    window.pvLearn(folders, name, { no_llm: true })
-      .then((rep) => { clearInterval(timer.current); setReport(rep); setStep(steps.length); setPct(100); setTimeout(() => setPhase('done'), 300); })
-      .catch((e) => { clearInterval(timer.current); setError(String(e.message || e)); setPhase('drop'); });
+    setError(null); setPhase('running');
+    setProg({ pct: 2, label: PHASE_LABEL.scan, name: '', index: 0, total: 0 });
+    setCur(null); setTally({ kept: 0, skipped: 0, images: 0 });
+    let kept = 0, skipped = 0;
+    window.pvLearnStream(folders, name, { no_llm: true }, (ev) => {
+      if (ev.phase === 'scan') {
+        setProg((p) => ({ ...p, label: PHASE_LABEL.scan, total: ev.n_catalogs }));
+      } else if (ev.phase === 'catalog') {
+        if (ev.kept) kept += 1; else skipped += 1;
+        setCur(ev);
+        setTally({ kept, skipped, images: ev.running_images });
+        setProg({
+          label: '讀取編目檔', name: ev.name, index: ev.index, total: ev.total,
+          pct: Math.round((ev.index / Math.max(1, ev.total)) * 80),
+        });
+      } else if (PHASE_LABEL[ev.phase]) {
+        setProg((p) => ({ ...p, label: PHASE_LABEL[ev.phase], pct: ev.phase === 'save' ? 98 : Math.max(p.pct, 85) }));
+      } else if (ev.phase === 'done') {
+        setReport(ev.report); setProg((p) => ({ ...p, pct: 100 }));
+        setTimeout(() => setPhase('done'), 250);
+      } else if (ev.phase === 'error') {
+        setError(ev.detail || 'learn failed'); setPhase('drop');
+      }
+    }).catch((e) => { setError(String(e.message || e)); setPhase('drop'); });
   };
-  React.useEffect(() => () => clearInterval(timer.current), []);
 
   if (phase === 'drop') {
     return (
@@ -126,37 +142,64 @@ function LearnView({ accent, onDone }) {
   }
 
   if (phase === 'running') {
+    const COLOR_HEX = {
+      red: '#D9756A', '紅色': '#D9756A', yellow: '#E2C15C', '黃色': '#E2C15C',
+      green: '#6FBF8A', '綠色': '#6FBF8A', blue: '#6E8BA8', '藍色': '#6E8BA8',
+      purple: '#B07CC6', '紫色': '#B07CC6',
+    };
+    const colorHex = (k) => COLOR_HEX[String(k).toLowerCase()] || COLOR_HEX[k] || 'var(--ink-3)';
+    const barPct = (v, total) => (total ? Math.round((v / total) * 100) : 0);
     return (
-      <div className="page fade-in" style={{ maxWidth: 720 }}>
-        <div className="section-head"><h2>學習中…</h2><span className="hint">Apple Silicon · MPS · 本地不出機</span></div>
+      <div className="page fade-in" style={{ maxWidth: 760 }}>
+        <div className="section-head"><h2>學習中…</h2><span className="hint">本地不出機 · {prog.label}</span></div>
         <div className="card pad">
           <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-            <span className="muted" style={{ fontSize: 12.5 }}>階段 A 管線 · learn_from_folder()</span>
-            <span className="mono" style={{ fontSize: 13, color: accent }}>{pct}%</span>
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              {prog.total ? `編目檔 ${prog.index}/${prog.total}` : '掃描中…'}
+              {prog.name && <span className="mono" style={{ marginLeft: 6 }}>· {prog.name}</span>}
+            </span>
+            <span className="mono" style={{ fontSize: 13, color: accent }}>{prog.pct}%</span>
           </div>
-          <div className="bar-track" style={{ marginBottom: 22 }}><div className="bar-fill" style={{ width: pct + '%', background: accent, transition: 'width .6s' }}></div></div>
-          <div className="col" style={{ gap: 4 }}>
-            {steps.map((s, i) => {
-              const state = i < step ? 'done' : i === step ? 'now' : 'wait';
-              return (
-                <div key={s.k} className="row" style={{ gap: 12, padding: '9px 4px', opacity: state === 'wait' ? .4 : 1, transition: 'opacity .3s' }}>
-                  <span style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    background: state === 'done' ? 'var(--keep-soft)' : state === 'now' ? accent : 'rgba(255,255,255,.06)',
-                    color: state === 'done' ? 'var(--keep)' : state === 'now' ? '#241704' : 'var(--ink-3)' }}>
-                    {state === 'done' ? <Icon name="check" s={13} w={2.4} /> : state === 'now'
-                      ? <span className="spin" style={{ width: 11, height: 11, border: '2px solid #241704', borderTopColor: 'transparent', borderRadius: '50%', animation: 'sp .7s linear infinite' }}></span>
-                      : <span className="mono" style={{ fontSize: 11 }}>{i + 1}</span>}
-                  </span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{s.zh} <span className="muted mono" style={{ fontSize: 11 }}>· {s.en}</span></div>
+          <div className="bar-track" style={{ marginBottom: 18 }}>
+            <div className="bar-fill" style={{ width: prog.pct + '%', background: accent, transition: 'width .3s' }}></div>
+          </div>
+
+          {/* running totals */}
+          <div className="row gap16" style={{ marginBottom: 4 }}>
+            <span className="mono" style={{ fontSize: 12 }}>採用 <b style={{ color: 'var(--keep)' }}>{tally.kept}</b></span>
+            <span className="mono" style={{ fontSize: 12 }}>跳過 <b style={{ color: 'var(--maybe)' }}>{tally.skipped}</b></span>
+            <span className="mono" style={{ fontSize: 12 }}>累計樣本 <b>{(tally.images || 0).toLocaleString()}</b></span>
+          </div>
+
+          {/* current catalog: star histogram + color labels */}
+          {cur && (
+            <div style={{ borderTop: '1px solid var(--line)', marginTop: 14, paddingTop: 14 }}>
+              <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+                <span className="mono" style={{ fontSize: 13, fontWeight: 600 }}>{cur.name}</span>
+                <span className={'badge ' + (cur.kept ? 'keep' : 'maybe')}>{cur.kept ? '採用' : '跳過'} · {cur.stats.n_images} 張</span>
+              </div>
+              <div className="col" style={{ gap: 4, marginBottom: 10 }}>
+                {[5, 4, 3, 2, 1].map((st) => (
+                  <div key={st} className="dist-row">
+                    <div className="dist-k">{st}★</div>
+                    <div className="dist-bar"><div className="dist-fill" style={{ width: barPct(cur.stats.ratings[st], cur.stats.n_images) + '%' }}></div></div>
+                    <div className="dist-v">{cur.stats.ratings[st] || 0}</div>
                   </div>
-                  <span className="muted mono" style={{ fontSize: 11 }}>{s.detail}</span>
-                </div>
-              );
-            })}
-          </div>
+                ))}
+              </div>
+              <div className="row gap8" style={{ flexWrap: 'wrap' }}>
+                {Object.entries(cur.stats.colors || {}).map(([k, v]) => (
+                  <span key={k} className="mono" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, background: 'var(--raise)', padding: '3px 8px', borderRadius: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: colorHex(k) }}></span>{k} {v}
+                  </span>
+                ))}
+                {cur.stats.flags > 0 && <span className="badge keep">旗標 {cur.stats.flags}</span>}
+                {cur.stats.rejects > 0 && <span className="badge reject">退 {cur.stats.rejects}</span>}
+                {!cur.kept && cur.reason && <span className="muted mono" style={{ fontSize: 10.5 }}>{cur.reason}</span>}
+              </div>
+            </div>
+          )}
         </div>
-        <style>{`@keyframes sp{to{transform:rotate(360deg)}}`}</style>
       </div>
     );
   }
