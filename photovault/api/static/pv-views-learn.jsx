@@ -3,21 +3,43 @@
 // ── Stage A: Learn a Taste Profile from catalog folder(s) ────────────
 function LearnView({ accent, onDone }) {
   const [phase, setPhase] = React.useState('drop'); // drop | running | done
-  // M5: browsers can't read real local paths from a drop, so we take an
-  // absolute folder path via a text field (the dropzone stays as a visual cue).
-  const [folder, setFolder] = React.useState('');
+  // M5: the backend runs locally, so a click opens a native OS folder chooser
+  // (/api/pick-folder) — the user never types a path. Multiple catalog roots
+  // can be added; every .lrcat under any of them is learned together.
+  const [folders, setFolders] = React.useState([]);
   const [name, setName] = React.useState('');
+  const [picking, setPicking] = React.useState(false);
+  const [pickerSupported, setPickerSupported] = React.useState(true);
+  const [manual, setManual] = React.useState('');
   const [step, setStep] = React.useState(-1);
   const [pct, setPct] = React.useState(0);
   const [error, setError] = React.useState(null);
   const [report, setReport] = React.useState(null);
   const steps = window.LEARN_STEPS;
   const timer = React.useRef(null);
-  const pathInput = React.useRef(null);
+
+  const addFolder = async () => {
+    setError(null); setPicking(true);
+    const res = await window.pvPickFolder();
+    setPicking(false);
+    if (res && res.path) {
+      setFolders((prev) => prev.includes(res.path) ? prev : [...prev, res.path]);
+    } else if (res && res.supported === false) {
+      setPickerSupported(false); // no native dialog here -> reveal manual entry
+    }
+  };
+  const addManual = () => {
+    const p = manual.trim();
+    if (!p) return;
+    setFolders((prev) => prev.includes(p) ? prev : [...prev, p]);
+    setManual('');
+  };
+  const removeFolder = (p) => setFolders((prev) => prev.filter((x) => x !== p));
+  const reset = () => { setFolders([]); setError(null); };
 
   // Run the REAL learn (POST /api/learn) while the cosmetic progress animates.
   const start = () => {
-    if (!folder || !name) { setError('請輸入編目檔資料夾路徑與檔名'); return; }
+    if (!folders.length || !name) { setError('請至少加入一個資料夾並填寫檔名'); return; }
     setError(null);
     setPhase('running'); setStep(0); setPct(0);
     let i = 0;
@@ -26,7 +48,7 @@ function LearnView({ accent, onDone }) {
       if (i >= steps.length - 1) { setStep(steps.length - 1); setPct(95); clearInterval(timer.current); }
       else { setStep(i); setPct(Math.round(i / steps.length * 100)); }
     }, 600);
-    window.pvLearn(folder, name, { no_llm: true })
+    window.pvLearn(folders, name, { no_llm: true })
       .then((rep) => { clearInterval(timer.current); setReport(rep); setStep(steps.length); setPct(100); setTimeout(() => setPhase('done'), 300); })
       .catch((e) => { clearInterval(timer.current); setError(String(e.message || e)); setPhase('drop'); });
   };
@@ -41,22 +63,52 @@ function LearnView({ accent, onDone }) {
           學成一份可重複使用的「品味檔案」。原始檔已刪也能學 —— L1/L2 只住在編目檔，L3 改讀預覽快取。
         </p>
         <Dropzone icon="catalog"
-          title={'輸入編目檔資料夾路徑 · Catalog folder path'}
+          title={picking ? '選擇資料夾中…' : '選擇編目檔資料夾 · Choose catalog folder'}
           sub="掃描所有 .lrcat（immutable=1，不動原檔）"
-          hint="點此後在下方填入絕對路徑，例如 /Users/you/Lightroom/"
-          onDrop={() => pathInput.current && pathInput.current.focus()} />
+          hint="點此開啟資料夾選擇框，可加入多個資料夾"
+          onDrop={addFolder} />
         <div className="card pad mt16" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="row gap12" style={{ alignItems: 'center' }}>
-            <Icon name="catalog" s={20} style={{ color: accent }} />
-            <input ref={pathInput} className="mono" value={folder} onChange={(e) => setFolder(e.target.value)}
-              placeholder="/absolute/path/to/catalogs"
-              style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--line-2)', color: 'var(--ink)', borderRadius: 'var(--r-sm)', padding: '9px 12px', fontSize: 12.5 }} />
+          {/* added folders */}
+          {folders.length > 0 ? (
+            <div className="col" style={{ gap: 6 }}>
+              {folders.map((f) => (
+                <div key={f} className="row gap12" style={{ alignItems: 'center', background: 'var(--panel-2)', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', padding: '7px 11px' }}>
+                  <Icon name="catalog" s={16} style={{ color: accent, flexShrink: 0 }} />
+                  <span className="mono" style={{ flex: 1, fontSize: 12, wordBreak: 'break-all' }}>{f}</span>
+                  <button className="btn ghost sm" onClick={() => removeFolder(f)} title="移除"><Icon name="x" s={14} /></button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-hint">尚未加入資料夾 — 點上方或「新增資料夾」開始</div>
+          )}
+
+          {/* add / reset row */}
+          <div className="row gap8" style={{ alignItems: 'center' }}>
+            <Btn icon="plus" onClick={addFolder} disabled={picking}>{picking ? '選擇中…' : '新增資料夾 · Add folder'}</Btn>
+            <Btn ghost icon="refresh" onClick={reset} disabled={!folders.length}>重設 · Reset</Btn>
+            <span className="muted mono" style={{ fontSize: 11 }}>{folders.length} 個資料夾</span>
           </div>
+
+          {/* manual fallback (only when no native picker is available) */}
+          {!pickerSupported && (
+            <div className="row gap8" style={{ alignItems: 'center' }}>
+              <input className="mono" value={manual} onChange={(e) => setManual(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') addManual(); }}
+                placeholder="/absolute/path/to/catalogs"
+                style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--line-2)', color: 'var(--ink)', borderRadius: 'var(--r-sm)', padding: '9px 12px', fontSize: 12.5 }} />
+              <Btn sm icon="plus" onClick={addManual}>加入</Btn>
+            </div>
+          )}
+
+          <div style={{ height: 1, background: 'var(--line)' }}></div>
+
+          {/* name + learn */}
           <div className="row gap12" style={{ alignItems: 'center' }}>
             <label className="muted mono" style={{ fontSize: 11, width: 28 }}>檔名</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="profile name"
               style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--line-2)', color: 'var(--ink)', borderRadius: 'var(--r-sm)', padding: '9px 12px', fontSize: 12.5 }} />
-            <Btn primary icon="cpu" onClick={start} disabled={!folder || !name}>開始學習 · Learn</Btn>
+            <Btn primary icon="cpu" onClick={start} disabled={!folders.length || !name}>開始學習 · Learn</Btn>
           </div>
           {error && <div className="reason" style={{ borderLeftColor: 'var(--reject)', color: 'var(--reject)' }}>{error}</div>}
         </div>

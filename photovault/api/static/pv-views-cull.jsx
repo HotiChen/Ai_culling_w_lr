@@ -5,14 +5,24 @@ const BAND_COLOR = { keep: 'var(--keep)', maybe: 'var(--maybe)', reject: 'var(--
 // ── Stage B: drop a new shoot folder & run the cull ──────────────────
 function CullView({ accent, onDone, profileId }) {
   const [phase, setPhase] = React.useState('drop');
-  // M5: take an absolute shoot-folder path via a text field (no real drag-drop).
+  // M5: a click opens a native OS folder chooser (/api/pick-folder); the user
+  // never types a path. Manual entry stays as a fallback where no picker exists.
   const [folder, setFolder] = React.useState('');
+  const [picking, setPicking] = React.useState(false);
+  const [pickerSupported, setPickerSupported] = React.useState(true);
   const [step, setStep] = React.useState(-1);
   const [pct, setPct] = React.useState(0);
   const [error, setError] = React.useState(null);
   const steps = window.CULL_STEPS;
   const timer = React.useRef(null);
-  const pathInput = React.useRef(null);
+
+  const pickFolder = async () => {
+    setError(null); setPicking(true);
+    const res = await window.pvPickFolder();
+    setPicking(false);
+    if (res && res.path) setFolder(res.path);
+    else if (res && res.supported === false) setPickerSupported(false);
+  };
 
   // Run the REAL apply (POST /api/apply) while the cosmetic progress animates.
   const start = () => {
@@ -41,16 +51,28 @@ function CullView({ accent, onDone, profileId }) {
           並把灰色地帶交給 Gemma 看圖仲裁。全程在本機，照片不出機。
         </p>
         <Dropzone icon="image"
-          title={'輸入照片資料夾路徑 · Shoot folder path'}
+          title={picking ? '選擇資料夾中…' : (folder || '選擇照片資料夾 · Choose shoot folder')}
           sub="支援 RAW / JPEG — rawpy 全畫質分析"
-          hint="點此後在下方填入絕對路徑，例如 /Users/you/Shoots/2026-06-12/"
-          onDrop={() => pathInput.current && pathInput.current.focus()} />
+          hint="點此開啟資料夾選擇框"
+          onDrop={pickFolder} />
         <div className="card pad mt16" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="row gap12" style={{ alignItems: 'center' }}>
-            <Icon name="image" s={20} style={{ color: accent }} />
-            <input ref={pathInput} className="mono" value={folder} onChange={(e) => setFolder(e.target.value)}
+          {folder ? (
+            <div className="row gap12" style={{ alignItems: 'center', background: 'var(--panel-2)', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', padding: '7px 11px' }}>
+              <Icon name="image" s={16} style={{ color: accent, flexShrink: 0 }} />
+              <span className="mono" style={{ flex: 1, fontSize: 12, wordBreak: 'break-all' }}>{folder}</span>
+              <button className="btn ghost sm" onClick={() => setFolder('')} title="清除"><Icon name="x" s={14} /></button>
+            </div>
+          ) : (
+            <div className="empty-hint">尚未選擇資料夾</div>
+          )}
+          {!pickerSupported && (
+            <input className="mono" value={folder} onChange={(e) => setFolder(e.target.value)}
               placeholder="/absolute/path/to/shoot"
-              style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--line-2)', color: 'var(--ink)', borderRadius: 'var(--r-sm)', padding: '9px 12px', fontSize: 12.5 }} />
+              style={{ background: 'var(--panel-2)', border: '1px solid var(--line-2)', color: 'var(--ink)', borderRadius: 'var(--r-sm)', padding: '9px 12px', fontSize: 12.5 }} />
+          )}
+          <div className="row gap8" style={{ alignItems: 'center' }}>
+            <Btn icon="folder" onClick={pickFolder} disabled={picking}>{picking ? '選擇中…' : '選擇資料夾 · Choose'}</Btn>
+            <div style={{ flex: 1 }}></div>
             <span className="badge neutral" style={{ fontSize: 12.5, padding: '5px 11px' }}>套用 · {profileId || '—'}</span>
             <Btn primary icon="cull" onClick={start} disabled={!folder || !profileId}>執行選片 · Run cull</Btn>
           </div>

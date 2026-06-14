@@ -58,16 +58,27 @@ window.pvApply = async function (photoFolder, name, opts) {
   return payload;
 };
 
-// Run stage A (learn). Returns the LearnReport JSON.
-window.pvLearn = async function (catalogFolder, name, opts) {
+// Run stage A (learn) from one or more catalog folders. Returns LearnReport JSON.
+window.pvLearn = async function (folders, name, opts) {
   opts = opts || {};
+  const list = Array.isArray(folders) ? folders : [folders];
   return pvGetJSON('/api/learn', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      catalog_folder: catalogFolder, name: name, no_llm: !!opts.no_llm,
+      catalog_folders: list, name: name, no_llm: !!opts.no_llm,
     }),
   });
+};
+
+// Open the OS-native folder chooser (backend runs locally). Returns
+// { path: <abs|null>, supported: <bool> } — path is null on cancel/unsupported.
+window.pvPickFolder = async function () {
+  try {
+    return await pvGetJSON('/api/pick-folder', { method: 'POST' });
+  } catch (e) {
+    return { path: null, supported: false };
+  }
 };
 
 async function pvBoot() {

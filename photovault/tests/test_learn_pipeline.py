@@ -9,6 +9,32 @@ from photovault.core.profile import load_profile
 from photovault.settings import Settings
 
 
+def test_collect_catalogs_multi_and_dedup(catalog_folder: Path, tmp_path: Path):
+    from photovault.core.learn.pipeline import collect_catalogs
+    from photovault.tests.make_fake import default_images, write_catalog
+
+    folder2 = tmp_path / "more"
+    folder2.mkdir()
+    write_catalog(folder2 / "shoot2.lrcat", default_images())
+
+    # Single folder -> 1; two folders -> 2; passing the same root twice dedups.
+    assert len(collect_catalogs(catalog_folder)) == 1
+    assert len(collect_catalogs([catalog_folder, folder2])) == 2
+    assert len(collect_catalogs([catalog_folder, catalog_folder])) == 1
+
+
+def test_learn_from_multiple_folders(catalog_folder: Path, settings: Settings, tmp_path: Path):
+    from photovault.tests.make_fake import default_images, write_catalog
+
+    folder2 = tmp_path / "more"
+    folder2.mkdir()
+    write_catalog(folder2 / "shoot2.lrcat", default_images())
+
+    report = learn_from_folder([catalog_folder, folder2], "multi", settings, use_llm=False)
+    assert report.n_catalogs == 2
+    assert report.n_images == 22  # 11 per identical catalog
+
+
 def test_learn_end_to_end(catalog_folder: Path, settings: Settings):
     report = learn_from_folder(catalog_folder, "熱茶", settings, use_llm=False)
 

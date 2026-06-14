@@ -66,14 +66,22 @@ def create_app(settings: Optional[Any] = None):
         from photovault.core.learn import learn_from_folder
 
         body = await request.json()
-        catalog_folder = body.get("catalog_folder")
+        # Accept either a single `catalog_folder` (back-compat) or a list of
+        # `catalog_folders` (the UI's add-multiple-folders flow).
+        folders = body.get("catalog_folders")
+        if not folders:
+            single = body.get("catalog_folder")
+            folders = [single] if single else []
+        folders = [f for f in folders if f]
         name = body.get("name")
         no_llm = bool(body.get("no_llm", False))
-        if not catalog_folder or not name:
-            raise HTTPException(status_code=400, detail="catalog_folder and name required")
+        if not folders or not name:
+            raise HTTPException(
+                status_code=400, detail="catalog_folders and name required"
+            )
         try:
             report = learn_from_folder(
-                catalog_folder, name, _settings(), use_llm=not no_llm
+                folders, name, _settings(), use_llm=not no_llm
             )
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -121,6 +129,18 @@ def create_app(settings: Optional[Any] = None):
         app.state.last_paths = {str(Path(r.path).resolve()) for r in report.results}
 
         return mappers.apply_payload(report, folder)
+
+    @app.post("/api/pick-folder")
+    def pick_folder() -> Any:
+        """Open a native OS folder chooser and return the picked absolute path.
+
+        Because the backend runs on the user's own machine, it can show a real
+        folder dialog (macOS ``osascript``) so the user never types a path.
+        Returns ``{"path": <abs|null>, "supported": <bool>}`` — ``path`` is null
+        when the user cancelled or no native picker is available (the UI then
+        falls back to manual entry).
+        """
+        return {"path": _pick_folder_dialog(), "supported": _picker_supported()}
 
     @app.get("/api/thumb")
     def get_thumb(path: str = Query(...)):
@@ -187,6 +207,43 @@ def _is_within(child: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _picker_supported() -> bool:
+    """True if a native folder dialog is available (macOS only for now)."""
+    import sys
+
+    return sys.platform == "darwin"
+
+
+def _pick_folder_dialog() -> Optional[str]:
+    """Show a native folder chooser and return its POSIX path.
+
+    macOS-only (uses ``osascript``). Returns None if the user cancelled, the
+    picker is unavailable, or it errored — callers treat None as "no path".
+    """
+    import subprocess
+    import sys
+
+    if sys.platform != "darwin":
+        return None
+    script = (
+        'POSIX path of (choose folder with prompt '
+        '"選擇資料夾 · Choose a folder for PhotoVault")'
+    )
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:  # user cancelled the dialog
+        return None
+    path = proc.stdout.strip()
+    return path or None
 
 
 def _make_thumbnail(path: Path, max_side: int = 480) -> Optional[bytes]:

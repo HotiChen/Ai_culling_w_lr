@@ -130,6 +130,56 @@ def test_apply_missing_profile(client: TestClient, new_photos: Path):
     assert r.status_code == 404
 
 
+def test_learn_with_multiple_folders(settings: Settings, catalog_folder: Path, tmp_path: Path):
+    # A second catalog folder so the API has >1 root to aggregate.
+    from photovault.tests.make_fake import default_images, write_catalog
+
+    folder2 = tmp_path / "more_catalogs"
+    folder2.mkdir()
+    write_catalog(folder2 / "shoot2.lrcat", default_images())
+
+    client = TestClient(create_app(settings=settings))
+    r = client.post(
+        "/api/learn",
+        json={
+            "catalog_folders": [str(catalog_folder), str(folder2)],
+            "name": "multi",
+            "no_llm": True,
+        },
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["name"] == "multi"
+    assert data["n_catalogs"] == 2  # both roots' catalogs aggregated
+
+
+def test_learn_requires_folders_and_name(client: TestClient):
+    r = client.post("/api/learn", json={"catalog_folders": [], "name": "x"})
+    assert r.status_code == 400
+
+
+def test_pick_folder_returns_dialog_path(client: TestClient, monkeypatch):
+    # The native dialog is mocked (no real Finder in CI / on Linux).
+    import photovault.api.app as appmod
+
+    monkeypatch.setattr(appmod, "_pick_folder_dialog", lambda: "/Users/tim/Lightroom")
+    monkeypatch.setattr(appmod, "_picker_supported", lambda: True)
+    r = client.post("/api/pick-folder")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["path"] == "/Users/tim/Lightroom"
+    assert body["supported"] is True
+
+
+def test_pick_folder_cancelled_returns_null(client: TestClient, monkeypatch):
+    import photovault.api.app as appmod
+
+    monkeypatch.setattr(appmod, "_pick_folder_dialog", lambda: None)
+    r = client.post("/api/pick-folder")
+    assert r.status_code == 200
+    assert r.json()["path"] is None
+
+
 def test_create_app_importable_without_calling():
     # Importing the module must not require fastapi at import time of the package
     import importlib

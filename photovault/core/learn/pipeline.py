@@ -70,6 +70,29 @@ def _read_all_images(catalogs: list[Path]) -> list[CatalogImage]:
     return images
 
 
+def collect_catalogs(catalog_folder: "str | Path | list") -> list[Path]:
+    """Find every ``.lrcat`` under one or more root folders (deduped, sorted).
+
+    Accepts a single folder or a list of folders so the caller can learn from
+    several catalog roots at once. Duplicate catalogs (the same file reachable
+    from overlapping roots) are collapsed by resolved path.
+    """
+    if isinstance(catalog_folder, (str, Path)):
+        roots: list = [catalog_folder]
+    else:
+        roots = list(catalog_folder)
+
+    catalogs: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        for cat in find_catalogs(root):
+            resolved = cat.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                catalogs.append(cat)
+    return catalogs
+
+
 def _decode_preview(data: bytes) -> np.ndarray | None:
     """Decode preview JPEG bytes to an RGB array (lazy Pillow)."""
     try:
@@ -176,7 +199,7 @@ def _run_pixel_stage(
 
 
 def learn_from_folder(
-    catalog_folder: str | Path,
+    catalog_folder: "str | Path | list",
     name: str,
     settings: Settings,
     use_llm: bool = True,
@@ -186,12 +209,15 @@ def learn_from_folder(
 ) -> LearnReport:
     """Run stage A and persist the profile. Returns a :class:`LearnReport`.
 
+    *catalog_folder* is a single folder OR a list of folders; all ``.lrcat``
+    files found under any of them are learned from together.
+
     *judge* is an optional GemmaJudge-compatible object (must implement
     ``write_profile(name, stats) -> str``).  When None and the LLM is
     enabled, a real :class:`GemmaJudge` is constructed lazily.  Pass an
     explicit object (e.g. a FakeJudge) to avoid any network calls in tests.
     """
-    catalogs = find_catalogs(catalog_folder)
+    catalogs = collect_catalogs(catalog_folder)
     if not catalogs:
         raise ValueError(f"no .lrcat files found under {catalog_folder}")
 
