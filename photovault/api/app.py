@@ -432,20 +432,45 @@ def _pick_folder_dialog() -> Optional[str]:
     return path or None
 
 
+_RAW_THUMB_EXTS = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".raf", ".rw2", ".orf"}
+
+
+def _open_image_any(path: Path):
+    """Open *path* as a PIL image, decoding RAW via its embedded preview."""
+    import io
+
+    from PIL import Image
+
+    if path.suffix.lower() in _RAW_THUMB_EXTS:
+        try:
+            import rawpy
+
+            with rawpy.imread(str(path)) as raw:
+                thumb = raw.extract_thumb()
+            if thumb.format == rawpy.ThumbFormat.JPEG:
+                return Image.open(io.BytesIO(thumb.data))
+        except Exception:
+            pass  # fall through to Pillow (handles DNG / odd cases)
+    return Image.open(path)
+
+
 def _make_thumbnail(path: Path, max_side: int = 480) -> Optional[bytes]:
-    """Render a JPEG thumbnail of *path* (lazy Pillow). None on failure."""
+    """Render a JPEG thumbnail of *path* (Pillow + rawpy for RAW). None on failure."""
     try:
         import io
 
-        from PIL import Image
+        from PIL import Image  # noqa: F401
     except ImportError:
         return None
     try:
-        with Image.open(path) as im:
+        im = _open_image_any(path)
+        try:
             im = im.convert("RGB")
             im.thumbnail((max_side, max_side))
             buf = io.BytesIO()
             im.save(buf, format="JPEG", quality=82)
             return buf.getvalue()
+        finally:
+            im.close()
     except Exception:
         return None
