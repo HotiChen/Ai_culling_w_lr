@@ -35,6 +35,68 @@ def test_learn_from_multiple_folders(catalog_folder: Path, settings: Settings, t
     assert report.n_images == 22  # 11 per identical catalog
 
 
+def test_has_curation_signal_and_filtered_read(catalog_folder: Path, tmp_path: Path):
+    from photovault.core.learn.pipeline import (
+        has_curation_signal,
+        read_catalogs_filtered,
+    )
+    from photovault.tests.make_fake import FakeImage, default_images, write_catalog
+
+    # A catalog where nothing was picked / rated / color-labelled.
+    blank = tmp_path / "blank"
+    blank.mkdir()
+    write_catalog(
+        blank / "blank.lrcat",
+        [FakeImage(base_name=f"x{i}", capture_time=f"2024-01-01T00:00:0{i}") for i in range(3)],
+    )
+    blank_cat = blank / "blank.lrcat"
+    good_cat = catalog_folder / "shoot.lrcat"
+
+    from photovault.core.catalog.reader import iter_images, open_ro
+
+    conn = open_ro(blank_cat)
+    assert not has_curation_signal(list(iter_images(conn)))
+    conn.close()
+
+    images, kept, skipped = read_catalogs_filtered([good_cat, blank_cat])
+    assert kept == [good_cat]
+    assert len(skipped) == 1 and skipped[0][0] == blank_cat
+    assert len(images) == 11  # only the good catalog's images
+
+
+def test_learn_skips_unlabeled_catalog_and_logs(catalog_folder: Path, settings: Settings, tmp_path: Path):
+    from photovault.tests.make_fake import FakeImage, write_catalog
+
+    # Put a blank (no-signal) catalog alongside the good one under one root.
+    blank_dir = tmp_path / "roots"
+    blank_dir.mkdir()
+    write_catalog(
+        blank_dir / "blank.lrcat",
+        [FakeImage(base_name=f"x{i}", capture_time=f"2024-01-01T00:00:0{i}") for i in range(3)],
+    )
+
+    report = learn_from_folder(
+        [catalog_folder, blank_dir], "mix", settings, use_llm=False
+    )
+    assert report.n_catalogs == 1  # blank one skipped
+    assert report.n_skipped == 1
+    assert any("blank.lrcat" in line for line in report.log)
+    assert report.skipped[0]["reason"]
+
+
+def test_learn_all_skipped_raises(settings: Settings, tmp_path: Path):
+    from photovault.tests.make_fake import FakeImage, write_catalog
+
+    root = tmp_path / "allblank"
+    root.mkdir()
+    write_catalog(
+        root / "blank.lrcat",
+        [FakeImage(base_name="x", capture_time="2024-01-01T00:00:00")],
+    )
+    with pytest.raises(ValueError):
+        learn_from_folder(root, "x", settings, use_llm=False)
+
+
 def test_learn_end_to_end(catalog_folder: Path, settings: Settings):
     report = learn_from_folder(catalog_folder, "熱茶", settings, use_llm=False)
 

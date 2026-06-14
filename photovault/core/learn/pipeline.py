@@ -8,7 +8,7 @@ learning (taste_vector, classifier) is added in M2.
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +48,10 @@ class LearnReport:
     pixels_used: bool = False
     n_embedded: int = 0
     pixels_note: str = ""
+    # Catalogs skipped for having no curation signal (no picks/ratings/colors).
+    n_skipped: int = 0
+    skipped: list = field(default_factory=list)  # [{"catalog": str, "reason": str}]
+    log: list = field(default_factory=list)  # human-readable log lines
 
 
 @dataclass
@@ -68,6 +72,50 @@ def _read_all_images(catalogs: list[Path]) -> list[CatalogImage]:
         finally:
             conn.close()
     return images
+
+
+def has_curation_signal(images: list[CatalogImage]) -> bool:
+    """True if any image carries a pick flag, a star rating, or a color label.
+
+    A catalog with none of these has no keep/reject signal to learn from, so it
+    is skipped (with a log entry) during learning.
+    """
+    for im in images:
+        if im.pick != 0:
+            return True
+        if im.rating is not None and im.rating > 0:
+            return True
+        if im.color_label:
+            return True
+    return False
+
+
+def read_catalogs_filtered(
+    catalogs: list[Path],
+) -> tuple[list[CatalogImage], list[Path], list[tuple[Path, str]]]:
+    """Read images per catalog, skipping ones with no curation signal.
+
+    Returns ``(images, kept_catalogs, skipped)`` where *skipped* is a list of
+    ``(catalog_path, reason)`` for catalogs that were left out.
+    """
+    images: list[CatalogImage] = []
+    kept: list[Path] = []
+    skipped: list[tuple[Path, str]] = []
+    for cat in catalogs:
+        conn = open_ro(cat)
+        try:
+            cat_images = list(iter_images(conn))
+        finally:
+            conn.close()
+        if not cat_images:
+            skipped.append((cat, "no images"))
+            continue
+        if not has_curation_signal(cat_images):
+            skipped.append((cat, "no picks / star ratings / color labels"))
+            continue
+        images.extend(cat_images)
+        kept.append(cat)
+    return images, kept, skipped
 
 
 def collect_catalogs(catalog_folder: "str | Path | list") -> list[Path]:
@@ -221,9 +269,16 @@ def learn_from_folder(
     if not catalogs:
         raise ValueError(f"no .lrcat files found under {catalog_folder}")
 
-    images = _read_all_images(catalogs)
+    # Skip catalogs with no curation signal (no picks/ratings/colors), logging each.
+    images, kept_catalogs, skipped = read_catalogs_filtered(catalogs)
+    log: list[str] = []
+    for cat, reason in skipped:
+        log.append(f"skipped {cat.name} — {reason}")
     if not images:
-        raise ValueError("catalogs contain no images")
+        raise ValueError(
+            "every catalog was skipped (no picks / star ratings / color labels); "
+            "nothing to learn from"
+        )
 
     # L2 stats + labels.
     stats = compute_stats(images, settings.cull)
@@ -249,7 +304,7 @@ def learn_from_folder(
     )
     meta = ProfileMeta(
         name=name,
-        source_catalogs=[str(c) for c in catalogs],
+        source_catalogs=[str(c) for c in kept_catalogs],
         n_images=len(images),
         n_keepers=n_keepers,
         n_rejects=n_rejects,
@@ -318,7 +373,7 @@ def learn_from_folder(
     return LearnReport(
         name=name,
         profile_dir=profile_dir,
-        n_catalogs=len(catalogs),
+        n_catalogs=len(kept_catalogs),
         n_images=len(images),
         n_keepers=n_keepers,
         n_rejects=n_rejects,
@@ -328,4 +383,7 @@ def learn_from_folder(
         pixels_used=pixels_used,
         n_embedded=n_embedded,
         pixels_note=pixels_note,
+        n_skipped=len(skipped),
+        skipped=[{"catalog": str(c), "reason": r} for c, r in skipped],
+        log=log,
     )

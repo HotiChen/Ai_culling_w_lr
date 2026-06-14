@@ -158,6 +158,34 @@ def test_learn_requires_folders_and_name(client: TestClient):
     assert r.status_code == 400
 
 
+def test_learn_name_optional_defaults_to_folder(settings: Settings, catalog_folder: Path):
+    client = TestClient(create_app(settings=settings))
+    # No name given -> defaults to the folder's basename.
+    r = client.post("/api/learn", json={"catalog_folders": [str(catalog_folder)], "no_llm": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == catalog_folder.name
+
+
+def test_learn_response_includes_skip_log(settings: Settings, catalog_folder: Path, tmp_path: Path):
+    from photovault.tests.make_fake import FakeImage, write_catalog
+
+    blank = tmp_path / "blankroot"
+    blank.mkdir()
+    write_catalog(
+        blank / "blank.lrcat",
+        [FakeImage(base_name="x", capture_time="2024-01-01T00:00:00")],
+    )
+    client = TestClient(create_app(settings=settings))
+    r = client.post(
+        "/api/learn",
+        json={"catalog_folders": [str(catalog_folder), str(blank)], "name": "mix", "no_llm": True},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["n_skipped"] == 1
+    assert body["log"] and "blank.lrcat" in body["log"][0]
+
+
 def test_pick_folder_returns_dialog_path(client: TestClient, monkeypatch):
     # The native dialog is mocked (no real Finder in CI / on Linux).
     import photovault.api.app as appmod

@@ -37,9 +37,17 @@ function LearnView({ accent, onDone }) {
   const removeFolder = (p) => setFolders((prev) => prev.filter((x) => x !== p));
   const reset = () => { setFolders([]); setError(null); };
 
+  // Suggested profile name = last path segment of the first folder (used when
+  // the name field is left blank).
+  const suggestedName = () => {
+    if (!folders.length) return '';
+    const parts = folders[0].replace(/\/+$/, '').split('/');
+    return parts[parts.length - 1] || '';
+  };
+
   // Run the REAL learn (POST /api/learn) while the cosmetic progress animates.
   const start = () => {
-    if (!folders.length || !name) { setError('請至少加入一個資料夾並填寫檔名'); return; }
+    if (!folders.length) { setError('請至少加入一個資料夾'); return; }
     setError(null);
     setPhase('running'); setStep(0); setPct(0);
     let i = 0;
@@ -103,12 +111,13 @@ function LearnView({ accent, onDone }) {
 
           <div style={{ height: 1, background: 'var(--line)' }}></div>
 
-          {/* name + learn */}
+          {/* name (optional) + learn */}
           <div className="row gap12" style={{ alignItems: 'center' }}>
-            <label className="muted mono" style={{ fontSize: 11, width: 28 }}>檔名</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="profile name"
+            <label className="muted mono" style={{ fontSize: 11, width: 56 }}>檔名(可留空)</label>
+            <input value={name} onChange={(e) => setName(e.target.value)}
+              placeholder={suggestedName() ? `預設：${suggestedName()}` : 'profile name (optional)'}
               style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--line-2)', color: 'var(--ink)', borderRadius: 'var(--r-sm)', padding: '9px 12px', fontSize: 12.5 }} />
-            <Btn primary icon="cpu" onClick={start} disabled={!folders.length || !name}>開始學習 · Learn</Btn>
+            <Btn primary icon="cpu" onClick={start} disabled={!folders.length}>開始學習 · Learn</Btn>
           </div>
           {error && <div className="reason" style={{ borderLeftColor: 'var(--reject)', color: 'var(--reject)' }}>{error}</div>}
         </div>
@@ -159,18 +168,34 @@ function LearnView({ accent, onDone }) {
         <div style={{ width: 60, height: 60, borderRadius: 16, margin: '0 auto 18px', background: 'var(--keep-soft)', color: 'var(--keep)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Icon name="check" s={30} w={2.4} />
         </div>
-        <h2 style={{ fontSize: 19 }}>品味檔案「{name}」已建立</h2>
+        <h2 style={{ fontSize: 19 }}>品味檔案「{report ? report.name : name}」已建立</h2>
         <p className="muted" style={{ marginTop: 8, fontSize: 13 }}>
           {report ? `${report.n_images.toLocaleString()} 樣本 · ${report.n_presets} 個 preset · ${report.n_keepers} keep / ${report.n_rejects} reject` : ''}
         </p>
         <div className="grid-stats mt24" style={{ textAlign: 'left' }}>
-          <Stat v={report ? report.n_catalogs : '—'} label="來源編目檔" en="catalogs" />
-          <Stat v={report ? report.n_presets : '—'} label="風格 preset" en="looks" color={accent} />
+          <Stat v={report ? report.n_catalogs : '—'} label="採用編目檔" en="catalogs" />
+          <Stat v={report ? report.n_skipped : '—'} label="跳過編目檔" en="skipped" color={report && report.n_skipped ? 'var(--maybe)' : undefined} />
           <Stat v={report ? report.n_keepers : '—'} label="keepers" en="kept" />
           <Stat v={report ? report.n_rejects : '—'} label="rejects" en="culled" />
         </div>
+        {report && report.skipped && report.skipped.length > 0 && (
+          <div className="card pad mt20" style={{ textAlign: 'left' }}>
+            <div className="h-title" style={{ marginBottom: 8 }}>
+              已跳過的編目檔 <span className="muted mono" style={{ fontWeight: 400, fontSize: 11 }}>· 無挑片/星等/顏色標籤</span>
+            </div>
+            <div className="col" style={{ gap: 4, maxHeight: 180, overflowY: 'auto' }}>
+              {report.skipped.map((s, i) => (
+                <div key={i} className="row gap8" style={{ alignItems: 'center', fontSize: 12 }}>
+                  <Icon name="info" s={13} style={{ color: 'var(--maybe)', flexShrink: 0 }} />
+                  <span className="mono" style={{ flex: 1, wordBreak: 'break-all', color: 'var(--ink-2)' }}>{s.catalog}</span>
+                  <span className="muted mono" style={{ fontSize: 10.5 }}>{s.reason}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="row gap12 mt24" style={{ justifyContent: 'center' }}>
-          <Btn primary icon="profile" onClick={() => onDone(name)}>檢視檔案 · Inspect</Btn>
+          <Btn primary icon="profile" onClick={() => onDone(report ? report.name : name)}>檢視檔案 · Inspect</Btn>
         </div>
       </div>
     </div>

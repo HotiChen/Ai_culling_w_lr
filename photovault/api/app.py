@@ -73,12 +73,14 @@ def create_app(settings: Optional[Any] = None):
             single = body.get("catalog_folder")
             folders = [single] if single else []
         folders = [f for f in folders if f]
-        name = body.get("name")
+        if not folders:
+            raise HTTPException(status_code=400, detail="catalog_folders required")
+        # Profile name is optional: default to the (first) folder's basename so
+        # the user doesn't have to type one.
+        name = (body.get("name") or "").strip()
+        if not name:
+            name = Path(folders[0]).name or "profile"
         no_llm = bool(body.get("no_llm", False))
-        if not folders or not name:
-            raise HTTPException(
-                status_code=400, detail="catalog_folders and name required"
-            )
         try:
             report = learn_from_folder(
                 folders, name, _settings(), use_llm=not no_llm
@@ -98,6 +100,9 @@ def create_app(settings: Optional[Any] = None):
             "pixels_used": report.pixels_used,
             "n_embedded": report.n_embedded,
             "pixels_note": report.pixels_note,
+            "n_skipped": report.n_skipped,
+            "skipped": report.skipped,
+            "log": report.log,
         }
 
     @app.post("/api/apply")

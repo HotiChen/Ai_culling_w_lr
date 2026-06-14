@@ -46,9 +46,12 @@ def learn(
     typer.echo(f"  keepers     : {report.n_keepers}")
     typer.echo(f"  rejects     : {report.n_rejects}")
     typer.echo(f"  presets     : {report.n_presets}")
+    typer.echo(f"  skipped     : {report.n_skipped}")
     typer.echo(f"  rule-book   : {'Gemma-generated' if report.llm_used else 'placeholder'}")
     if report.llm_note:
         typer.secho(f"  note        : {report.llm_note}", fg=typer.colors.YELLOW)
+    for line in report.log:
+        typer.secho(f"  log         : {line}", fg=typer.colors.YELLOW)
 
 
 @app.command()
