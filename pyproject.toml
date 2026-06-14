@@ -47,6 +47,22 @@ pixels = [
 ]
 # M5: optional web UI. Pillow renders /api/thumb thumbnails (lazy import).
 web = ["fastapi>=0.110", "uvicorn>=0.29", "Pillow>=10.0"]
+# RAW decode (CR3/NEF/ARW/…) for stage B. Builds from source if no wheel.
+raw = ["rawpy>=0.21"]
+# Recommended everyday install: real culling (classifier + sharpness + pHash +
+# RAW) + the web UI, WITHOUT the heavy/edge-version-sensitive deps (mediapipe,
+# torch, open-clip, chromadb). Installs cleanly on newer Pythons where those
+# have no wheels yet. Add the optional ``pixels`` extra (on Python 3.11/3.12)
+# for CLIP taste vectors + blink detection.
+app = [
+    "Pillow>=10.0",
+    "opencv-python>=4.9",
+    "imagehash>=4.3",
+    "scikit-learn>=1.4",
+    "rawpy>=0.21",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
 dev = ["pytest>=8.0", "httpx>=0.27"]
 
 [project.scripts]
