@@ -40,6 +40,26 @@ def test_apply_produces_decisions_and_outputs(
     assert Path(report.report_path).exists()
 
 
+def test_metadata_classifier_actually_discriminates(
+    new_photos: Path, settings: Settings, catalog_folder: Path
+):
+    """A metadata-only profile (no CLIP) must still split keep/maybe/reject —
+    regression for "everything became maybe" when apply couldn't read EXIF."""
+    from photovault.core.learn import learn_from_folder
+
+    # Learn WITHOUT previews/embedder -> profile has a metadata classifier only.
+    learn_from_folder(catalog_folder, "meta", settings, use_llm=False)
+    report = apply_to_folder(
+        new_photos, "meta", settings, embedder=None, blink_fn=_fake_blink
+    )
+    assert report.n_images == 6
+    decisions = {r.decision for r in report.results}
+    # The classifier produced varied probabilities -> not all "maybe".
+    assert decisions != {"maybe"}
+    # And every result has a real numeric score (not gate-only None).
+    assert all(r.score is not None for r in report.results)
+
+
 def test_apply_aggregates_decode_failures(
     new_photos: Path, settings: Settings, learned_profile: str
 ):
