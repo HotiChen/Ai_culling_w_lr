@@ -40,6 +40,20 @@ def test_apply_produces_decisions_and_outputs(
     assert Path(report.report_path).exists()
 
 
+def test_apply_aggregates_decode_failures(
+    new_photos: Path, settings: Settings, learned_profile: str
+):
+    # An undecodable CR3 must not crash the cull or flood notes per-file.
+    (new_photos / "broken.cr3").write_bytes(b"not a real raw file")
+    report = apply_to_folder(
+        new_photos, learned_profile, settings,
+        embedder=FakeEmbedder(), blink_fn=_fake_blink,
+    )
+    assert report.n_images == 6  # the 6 real jpgs still scored
+    joined = " ".join(report.notes)
+    assert "could not decode" in joined and "broken.cr3" in joined
+
+
 def test_apply_emits_per_photo_progress(
     new_photos: Path, settings: Settings, learned_profile: str
 ):

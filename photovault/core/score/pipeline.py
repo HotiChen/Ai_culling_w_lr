@@ -99,8 +99,46 @@ def _group_bursts(paths: list[Path], gap_seconds: float) -> dict[str, int]:
     return assignment
 
 
+# RAW formats Pillow can't open — decoded via rawpy (libraw) instead.
+_RAW_EXTS = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".raf", ".rw2", ".orf"}
+
+
+def _decode_raw(path: Path) -> np.ndarray | None:
+    """Decode a RAW file via rawpy (lazy). Prefer the fast embedded preview JPEG,
+    fall back to a full libraw develop. ``None`` if rawpy is missing or fails.
+    """
+    try:
+        import rawpy  # lazy: optional 'pixels' extra
+    except ImportError:
+        return None
+    try:
+        with rawpy.imread(str(path)) as raw:
+            # The embedded preview is a full-size JPEG — plenty for culling and
+            # far cheaper than a full demosaic over tens of thousands of frames.
+            try:
+                thumb = raw.extract_thumb()
+                if thumb.format == rawpy.ThumbFormat.JPEG:
+                    import io
+
+                    from PIL import Image
+                    return np.asarray(Image.open(io.BytesIO(thumb.data)).convert("RGB"))
+            except Exception:
+                pass
+            return raw.postprocess()
+    except Exception:
+        return None
+
+
 def _decode_image(path: Path) -> np.ndarray | None:
-    """Load a photo to an RGB array (lazy Pillow); ``None`` if it can't load."""
+    """Load a photo to an RGB array; ``None`` if it can't be decoded.
+
+    RAW files (CR3/NEF/ARW/…) go through rawpy; everything else through Pillow,
+    with rawpy as a last resort for odd containers.
+    """
+    if path.suffix.lower() in _RAW_EXTS:
+        arr = _decode_raw(path)
+        if arr is not None:
+            return arr
     try:
         from PIL import Image  # lazy
     except ImportError:
@@ -109,7 +147,8 @@ def _decode_image(path: Path) -> np.ndarray | None:
         with Image.open(path) as img:
             return np.asarray(img.convert("RGB"))
     except Exception:
-        return None
+        # Last resort for non-standard containers Pillow rejects.
+        return _decode_raw(path)
 
 
 def _resolve_embedder(embedder: Embedder | None) -> tuple[Embedder | None, str]:
@@ -265,13 +304,14 @@ def apply_to_folder(
     blink: dict[str, bool | None] = {}
     hashes: dict[str, int] = {}
     results: list[ScoreResult] = []
+    decode_failures: list[str] = []  # aggregated so 25k RAWs don't flood notes
     total = len(paths)
     _emit({"phase": "scan", "n_photos": total})
     for i, p in enumerate(paths):
         iid = p.stem
         arr = _decode_image(p)
         if arr is None:
-            notes.append(f"could not decode {p.name}")
+            decode_failures.append(p.name)
             _emit({
                 "phase": "photo", "index": i + 1, "total": total,
                 "name": p.name, "band": None, "stars": 0, "score": None,
@@ -320,6 +360,19 @@ def apply_to_folder(
             "stars": _stars(r.score), "skipped": False,
             "reason": (r.reasons[0] if r.reasons else ""),
         })
+
+    # Aggregate decode failures into a single, actionable note.
+    if decode_failures:
+        sample = ", ".join(decode_failures[:3])
+        raw_hint = ""
+        if any(Path(n).suffix.lower() in _RAW_EXTS for n in decode_failures):
+            try:
+                import rawpy  # noqa: F401
+            except ImportError:
+                raw_hint = " — install rawpy to read RAW/CR3: pip install 'photovault[pixels]'"
+        notes.append(
+            f"could not decode {len(decode_failures)} file(s) (e.g. {sample}){raw_hint}"
+        )
 
     # --- Burst dedup + gray-zone arbitration --------------------------------- #
     _emit({"phase": "dedup"})
