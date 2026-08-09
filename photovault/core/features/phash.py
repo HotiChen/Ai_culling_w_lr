@@ -10,31 +10,59 @@ from __future__ import annotations
 import numpy as np
 
 _HASH_SIZE = 8  # 8x8 -> 64-bit hash
+_DCT_SIZE = _HASH_SIZE * 4  # imagehash's highfreq_factor of 4 -> 32x32 transform
 
 
-def _to_gray_float(image: np.ndarray) -> np.ndarray:
-    arr = np.asarray(image).astype(np.float64)
-    if arr.ndim == 3:
-        arr = arr.mean(axis=2)
-    return arr
+def _to_gray(image: np.ndarray) -> "Image.Image":
+    """Grayscale *image* the same way ``imagehash`` does.
+
+    Uses PIL's ``convert("L")`` (ITU-R 601-2 luma) rather than a flat channel
+    mean, because the fallback has to reproduce ``imagehash`` bit-for-bit.
+    """
+    from PIL import Image  # lazy: keeps the module importable without Pillow
+
+    arr = np.asarray(image)
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr).convert("L")
+
+
+def _dct2(pixels: np.ndarray) -> np.ndarray:
+    """2-D DCT-II via matrix multiply, equal to ``scipy.fftpack`` up to scale.
+
+    The basis is ``D[k, j] = cos(pi * k * (2j + 1) / 2N)`` — frequency indexes
+    the rows, space indexes the columns. Building it the other way round yields
+    ``Dᵀ`` and silently computes ``Dᵀ @ px @ D``, which is a different transform
+    (not merely a transposed one) and shifts roughly a third of the hash bits.
+
+    The constant factor of 2 in scipy's definition is omitted deliberately: the
+    hash only compares coefficients against their own median, so any positive
+    scaling cancels out.
+    """
+    n = pixels.shape[0]
+    k = np.arange(n)
+    basis = np.cos(np.pi * k[:, None] * (2 * k[None, :] + 1) / (2 * n))
+    return basis @ pixels @ basis.T
 
 
 def _fallback_phash(image: np.ndarray) -> int:
-    """Pure-numpy DCT pHash (no third-party deps)."""
+    """Pure-numpy DCT pHash (no third-party deps).
+
+    Reproduces ``imagehash.phash(..., hash_size=8)`` exactly. That parity is the
+    point: hashes are persisted and compared against ``phash_hamming_max``, so a
+    fallback that merely approximated imagehash would make results depend on
+    whether an optional package happened to be installed.
+    """
     from PIL import Image  # lazy: only used to resize consistently
 
-    gray = _to_gray_float(image)
-    img = Image.fromarray(gray.astype(np.uint8)).resize((32, 32), Image.BILINEAR)
+    img = _to_gray(image).resize((_DCT_SIZE, _DCT_SIZE), Image.LANCZOS)
     pixels = np.asarray(img, dtype=np.float64)
 
-    # 2-D DCT-II via matrix multiply.
-    n = 32
-    k = np.arange(n)
-    basis = np.cos(np.pi * (2 * k[:, None] + 1) * k[None, :] / (2 * n))
-    dct = basis @ pixels @ basis.T
-
-    low = dct[:_HASH_SIZE, :_HASH_SIZE]
-    med = np.median(low[1:].flatten())  # drop DC term from the threshold
+    low = _dct2(pixels)[:_HASH_SIZE, :_HASH_SIZE]
+    # Median over all 64 low-frequency coefficients, DC included — this is what
+    # imagehash does, and the median is robust enough that the lone DC outlier
+    # does not drag the threshold.
+    med = np.median(low)
     bits = (low > med).flatten()
 
     value = 0
