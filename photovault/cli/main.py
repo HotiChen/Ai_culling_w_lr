@@ -3,6 +3,7 @@
     photovault learn <catalog-folder> --name <profile>   # stage A
     photovault inspect --name <profile>                   # show a profile
     photovault apply <photo-folder> --name <profile>      # stage B (M3)
+    photovault doctor                                     # check local Gemma
 """
 
 from __future__ import annotations
@@ -144,6 +145,35 @@ def serve(
         f"\n✓ PhotoVault web UI on http://{host}:{port}", fg=typer.colors.GREEN, bold=True
     )
     uvicorn.run(application, host=host, port=port)
+
+
+@app.command()
+def doctor() -> None:
+    """Check that the local Gemma server is up and has the configured model.
+
+    A wrong model tag otherwise shows up only as a placeholder ``profile.md``,
+    so this makes the failure explicit — and exits non-zero for scripting.
+    """
+    from photovault.core.judge import GemmaJudge
+
+    cfg = get_settings().llm
+    typer.secho("\nPhotoVault LLM check", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"  backend : {cfg.backend}")
+    typer.echo(f"  host    : {cfg.host}")
+    typer.echo(f"  model   : {cfg.model}")
+
+    st = GemmaJudge(cfg).status()
+    if st.ok:
+        typer.secho(f"  status  : ready — {st.detail}", fg=typer.colors.GREEN, bold=True)
+        return
+
+    typer.secho(f"  status  : unavailable — {st.detail}", fg=typer.colors.RED)
+    typer.secho(
+        "  culling still works without an LLM: add --no-llm "
+        "(gray-zone photos stay as 'maybe').",
+        fg=typer.colors.YELLOW,
+    )
+    raise typer.Exit(code=1)
 
 
 def main() -> None:  # pragma: no cover - console-script entrypoint

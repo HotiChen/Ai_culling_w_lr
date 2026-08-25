@@ -44,6 +44,20 @@ class Verdict:
     raw: str = ""
 
 
+@dataclass
+class LLMStatus:
+    """Result of a non-throwing health check against the local LLM server."""
+
+    reachable: bool
+    model_present: bool
+    models: list[str]
+    detail: str
+
+    @property
+    def ok(self) -> bool:
+        return self.reachable and self.model_present
+
+
 class GemmaJudge:
     """Backend-agnostic wrapper over a local Gemma server (Ollama or llama.cpp)."""
 
@@ -78,13 +92,63 @@ class GemmaJudge:
         req = urllib.request.Request(
             url, data=data, headers={"Content-Type": "application/json"}
         )
+        return self._request(req, url)
+
+    def _get(self, url: str) -> dict:
+        return self._request(urllib.request.Request(url, method="GET"), url)
+
+    def _request(self, req: urllib.request.Request, url: str) -> dict:
         try:
             with urllib.request.urlopen(req, timeout=self.cfg.request_timeout_s) as resp:
                 return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # The status code alone hides the useful part: Ollama answers a
+            # missing tag with {"error": "model 'x' not found, try pulling it
+            # first"}. Surface that so a wrong model name is self-diagnosing.
+            raise JudgeUnavailable(
+                f"{self.cfg.backend} server at {url} returned "
+                f"HTTP {exc.code}: {_error_detail(exc)}"
+            ) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise JudgeUnavailable(
                 f"cannot reach {self.cfg.backend} server at {url}: {exc}"
             ) from exc
+
+    # -- diagnostics ------------------------------------------------------ #
+    def list_models(self) -> list[str]:
+        """Model tags the server currently has loaded/pulled."""
+        if self.cfg.backend == "llamacpp":
+            url = self.cfg.host.rstrip("/") + "/v1/models"
+            return parse_openai_models(self._get(url))
+        url = self.cfg.host.rstrip("/") + "/api/tags"
+        return parse_ollama_tags(self._get(url))
+
+    def status(self) -> LLMStatus:
+        """Health check that never raises — for ``photovault doctor`` and notes."""
+        if not self.cfg.enabled:
+            return LLMStatus(False, False, [], "LLM disabled in settings")
+        try:
+            models = self.list_models()
+        except JudgeUnavailable as exc:
+            return LLMStatus(False, False, [], str(exc))
+
+        if model_installed(self.cfg.model, models):
+            return LLMStatus(
+                True, True, models,
+                f"{self.cfg.backend} at {self.cfg.host} has '{self.cfg.model}'",
+            )
+
+        installed = ", ".join(models) if models else "(none)"
+        hint = (
+            f"ollama pull {self.cfg.model}"
+            if self.cfg.backend == "ollama"
+            else f"load '{self.cfg.model}' in your llama.cpp server"
+        )
+        return LLMStatus(
+            True, False, models,
+            f"model '{self.cfg.model}' is not available on {self.cfg.host}. "
+            f"Installed: {installed}. Fix with: {hint}",
+        )
 
     # -- stage A: rule-book ---------------------------------------------- #
     def write_profile(self, name: str, stats: dict) -> str:
@@ -147,6 +211,49 @@ def build_openai_payload(
         "temperature": temperature,
         "stream": False,
     }
+
+
+def _error_detail(exc: urllib.error.HTTPError) -> str:
+    """Best-effort human text from an HTTP error body (JSON ``error`` or raw)."""
+    try:
+        raw = exc.read().decode("utf-8", "replace").strip()
+    except Exception:  # pragma: no cover - body already consumed/absent
+        return exc.reason or ""
+    if not raw:
+        return exc.reason or ""
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw[:300]
+    if isinstance(obj, dict):
+        err = obj.get("error")
+        if isinstance(err, dict):
+            err = err.get("message")
+        if err:
+            return str(err)[:300]
+    return raw[:300]
+
+
+def parse_ollama_tags(body: dict) -> list[str]:
+    """Model tags from Ollama's ``/api/tags``."""
+    return [m["name"] for m in body.get("models", []) if m.get("name")]
+
+
+def parse_openai_models(body: dict) -> list[str]:
+    """Model ids from an OpenAI-compatible ``/v1/models``."""
+    return [m["id"] for m in body.get("data", []) if m.get("id")]
+
+
+def model_installed(model: str, available: list[str]) -> bool:
+    """Match a configured model against a server's list.
+
+    Ollama reports a bare ``gemma4`` pull as ``gemma4:latest``, so an
+    untagged config name must still count as present.
+    """
+    if model in available:
+        return True
+    wanted = model if ":" in model else f"{model}:latest"
+    return wanted in available
 
 
 def parse_ollama_response(body: dict) -> str:
