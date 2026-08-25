@@ -63,15 +63,17 @@
 > Gemma 4 的 12B 版本本身具備視覺能力，**同一個模型**就能同時做文字推理與看圖判斷，
 > 因此不再需要原本「文字模型 + 視覺模型」兩支的設計。可用
 > `PHOTOVAULT_LLM__MODEL` 覆寫成其他 tag（Apple Silicon 可用 `gemma4:12b-mlx`）。
+> 用 `photovault doctor` / `GET /api/llm` 確認 host 通、且該 tag 真的已安裝 ——
+> 否則 LLM 失敗只會表現成一份 placeholder `profile.md`，很難察覺。
 > 部署可選 **Ollama**（`/api/generate`，預設）或 **llama.cpp** server
 > （OpenAI 相容 `/v1/chat/completions`，支援 QAT + MTP 加速、mmproj 多模態）。
 
 LLM **不**逐張看圖（太慢，M2 上跑視覺模型一張要數秒）。它只做兩件「判斷」：
 
 - **階段 A — 寫出你的品味規則書**：Gemma 讀完 L1/L2/L3 的統計結果，
-  生成一份人類看得懂的 `profile.md`（例：「偏好 f/2 淺景深、暖膚調、連拍留偏後段、
+  生成一份人類看得懂的 `profile.md`（例：「偏好 f/2 淣景深、暖膚調、連拍留偏後段、
   容忍高 ISO 但絕不留閉眼」）。這份同時當作階段 B 的 LLM system prompt。
-- **階段 B — 只仲裁「模稜兩可」那一疊**：清楚該留 / 該丟的，由快速的 CV+CLIP 直接決定；
+- **階段 B — 只仲裁「模棱兩可」那一疊**：清楚該留 / 該丟的，由快速的 CV+CLIP 直接決定；
   只有分數落在灰色地帶的，才送 **同一個 Gemma 模型**搭配規則書去看圖做最終判斷 + 一句理由。
 
 > 這樣設計：**沒有 LLM 也能跑**（純 CV+CLIP baseline，且自動寫 placeholder `profile.md`），
@@ -112,7 +114,7 @@ photovault/
 │   ├── profile/        # build / save / load Taste Profile（pydantic models）
 │   ├── learn/          # 階段 A 管線：catalogs → Taste Profile
 │   ├── score/          # 階段 B 評分 + 連拍去重 + keep/maybe/reject 分流（M3）
-│   ├── judge/          # Ollama Gemma client：profile.md 生成 + 視覺仲裁
+│   ├── judge/          # Ollama Gemma client：profile.md 生成 + 視覺仲裁 + status() 健檢
 │   └── export/         # XMP sidecar 寫入 / 資料夾分流 / HTML 報告（M3）
 ├── cli/                # typer：photovault learn | inspect | apply | serve
 ├── api/                # FastAPI（M5）：app.py（factory）+ mappers.py（純）+ static/（React SPA）
@@ -146,7 +148,7 @@ photovault/
 - 每張寫 **XMP sidecar**：星等 + 旗標 + 最匹配的 develop preset。
 - 選配：分流到 `keep/ maybe/ reject/` 子資料夾。
 - 產出 HTML 審片報告（縮圖 + 分數 + 理由）。
-  → 你把資料夾 import 進 Lightroom，已經選好且預調好。
+  → 你把資料夾 import 進 Lightroom，已經選好且預調好了。
 
 -----
 
