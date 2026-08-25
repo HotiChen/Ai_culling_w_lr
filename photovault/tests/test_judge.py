@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import urllib.error
 
 import pytest
 
@@ -14,8 +15,10 @@ from photovault.core.judge.ollama_client import (
     build_ollama_payload,
     build_openai_payload,
     build_profile_prompt,
+    parse_openai_models,
     parse_openai_response,
     parse_ollama_response,
+    parse_ollama_tags,
     parse_verdict,
 )
 from photovault.settings import LLMSettings
@@ -170,3 +173,136 @@ def test_arbitrate_llamacpp_sends_image_data_url(monkeypatch, tmp_path):
     )
     assert verdict.keep is False
     assert verdict.reason == "soft"
+
+
+# --------------------------------------------------------------------------- #
+# Diagnostics: is the server up, and is the configured Gemma tag actually there?
+#
+# Without this, a wrong model tag (e.g. `gemma4:12b` when the machine only has
+# `gemma3:12b` pulled) fails as a bare "HTTP Error 404" and the pipeline
+# silently falls back to a placeholder profile.md — the user never learns why.
+# --------------------------------------------------------------------------- #
+def _fake_urlopen_error(status: int, body: dict):
+    """urlopen stand-in that raises HTTPError carrying a JSON error body."""
+
+    def fake(req, timeout=None):
+        raise urllib.error.HTTPError(
+            req.full_url, status, "Not Found", {},
+            io.BytesIO(json.dumps(body).encode("utf-8")),
+        )
+
+    return fake
+
+
+def _fake_urlopen_get(captured: dict, response_body: dict):
+    """urlopen stand-in for GET requests (no request body to decode)."""
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(req, timeout=None):
+        captured["url"] = req.full_url
+        return _Resp(json.dumps(response_body).encode("utf-8"))
+
+    return fake
+
+
+def test_http_error_body_surfaces_in_message(monkeypatch):
+    monkeypatch.setattr(
+        ollama_client.urllib.request, "urlopen",
+        _fake_urlopen_error(404, {"error": "model 'gemma4:12b' not found, try pulling it first"}),
+    )
+    judge = GemmaJudge(LLMSettings(backend="ollama"))
+    with pytest.raises(JudgeUnavailable) as exc:
+        judge.write_profile("p", {})
+    msg = str(exc.value)
+    assert "404" in msg
+    # The server's own explanation must reach the user, not just the status code.
+    assert "not found" in msg and "gemma4:12b" in msg
+
+
+def test_parse_model_lists():
+    assert parse_ollama_tags({"models": [{"name": "gemma4:12b"}, {"name": "llava:7b"}]}) == [
+        "gemma4:12b",
+        "llava:7b",
+    ]
+    assert parse_ollama_tags({}) == []
+    assert parse_openai_models({"data": [{"id": "gemma-4-12b-qat"}]}) == ["gemma-4-12b-qat"]
+    assert parse_openai_models({}) == []
+
+
+def test_list_models_ollama_hits_tags_endpoint(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(
+        ollama_client.urllib.request, "urlopen",
+        _fake_urlopen_get(captured, {"models": [{"name": "gemma4:12b"}]}),
+    )
+    models = GemmaJudge(LLMSettings(backend="ollama", host="http://localhost:11434")).list_models()
+    assert captured["url"].endswith("/api/tags")
+    assert models == ["gemma4:12b"]
+
+
+def test_list_models_llamacpp_hits_v1_models(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(
+        ollama_client.urllib.request, "urlopen",
+        _fake_urlopen_get(captured, {"data": [{"id": "gemma-4-12b"}]}),
+    )
+    models = GemmaJudge(LLMSettings(backend="llamacpp", host="http://127.0.0.1:8085")).list_models()
+    assert captured["url"].endswith("/v1/models")
+    assert models == ["gemma-4-12b"]
+
+
+def test_status_model_present(monkeypatch):
+    monkeypatch.setattr(
+        ollama_client.urllib.request, "urlopen",
+        _fake_urlopen_get({}, {"models": [{"name": "gemma4:12b"}, {"name": "gemma3:12b"}]}),
+    )
+    st = GemmaJudge(LLMSettings(model="gemma4:12b")).status()
+    assert st.reachable is True
+    assert st.model_present is True
+    assert "gemma4:12b" in st.models
+    assert st.ok is True
+
+
+def test_status_model_missing_suggests_pull_and_lists_installed(monkeypatch):
+    monkeypatch.setattr(
+        ollama_client.urllib.request, "urlopen",
+        _fake_urlopen_get({}, {"models": [{"name": "gemma3:12b"}]}),
+    )
+    st = GemmaJudge(LLMSettings(model="gemma4:12b")).status()
+    assert st.reachable is True
+    assert st.model_present is False
+    assert st.ok is False
+    assert "gemma3:12b" in st.detail        # show what IS installed
+    assert "ollama pull gemma4:12b" in st.detail   # and how to fix it
+
+
+def test_status_matches_latest_suffix(monkeypatch):
+    # Ollama reports bare `gemma4` pulls as `gemma4:latest`; configuring
+    # `gemma4` must still count as present.
+    monkeypatch.setattr(
+        ollama_client.urllib.request, "urlopen",
+        _fake_urlopen_get({}, {"models": [{"name": "gemma4:latest"}]}),
+    )
+    st = GemmaJudge(LLMSettings(model="gemma4")).status()
+    assert st.model_present is True
+
+
+def test_status_unreachable_is_not_an_exception():
+    cfg = LLMSettings(host="http://127.0.0.1:1", request_timeout_s=1.0)
+    st = GemmaJudge(cfg).status()
+    assert st.reachable is False
+    assert st.ok is False
+    assert st.models == []
+    assert "127.0.0.1:1" in st.detail
+
+
+def test_status_disabled():
+    st = GemmaJudge(LLMSettings(enabled=False)).status()
+    assert st.ok is False
+    assert "disabled" in st.detail.lower()

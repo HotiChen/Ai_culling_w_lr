@@ -60,3 +60,40 @@ def test_apply_missing_profile(env, new_photos: Path):
     result = runner.invoke(app, ["apply", str(new_photos), "--name", "ghost"])
     assert result.exit_code == 1
     assert "not found" in result.output.lower()
+
+
+# --------------------------------------------------------------------------- #
+# `photovault doctor` — is the local Gemma actually reachable, with the right tag?
+# --------------------------------------------------------------------------- #
+def test_doctor_reports_ready(monkeypatch, tmp_path: Path):
+    from photovault.core.judge.ollama_client import LLMStatus
+
+    monkeypatch.setenv("PHOTOVAULT_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setattr(
+        "photovault.core.judge.GemmaJudge.status",
+        lambda self: LLMStatus(True, True, ["gemma4:12b"], "ollama has 'gemma4:12b'"),
+    )
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "gemma4:12b" in result.output
+    assert "ready" in result.output.lower()
+
+
+def test_doctor_reports_missing_model_and_exits_nonzero(monkeypatch, tmp_path: Path):
+    from photovault.core.judge.ollama_client import LLMStatus
+
+    monkeypatch.setenv("PHOTOVAULT_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setattr(
+        "photovault.core.judge.GemmaJudge.status",
+        lambda self: LLMStatus(
+            True, False, ["gemma3:12b"],
+            "model 'gemma4:12b' is not available. Installed: gemma3:12b. "
+            "Fix with: ollama pull gemma4:12b",
+        ),
+    )
+    result = runner.invoke(app, ["doctor"])
+    # Non-zero so scripts/CI can gate on it, but the pipeline itself still runs.
+    assert result.exit_code == 1
+    assert "ollama pull gemma4:12b" in result.output
+    # Culling without an LLM is supported, so say so instead of just failing.
+    assert "--no-llm" in result.output

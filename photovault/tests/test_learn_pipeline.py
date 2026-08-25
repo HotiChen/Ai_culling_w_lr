@@ -131,6 +131,7 @@ def test_learn_progress_events(catalog_folder: Path, settings: Settings):
 def test_learn_trains_metadata_classifier_without_pixels(catalog_folder: Path, settings: Settings):
     # A web-style learn (no preview_cache / embedder) must still persist a
     # keep/reject classifier so culling isn't gate-only.
+    pytest.importorskip("sklearn")
     learn_from_folder(catalog_folder, "meta", settings, use_llm=False)
     prof = load_profile(settings.profiles_dir, "meta")
     assert prof.classifier is not None
