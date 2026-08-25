@@ -9,6 +9,7 @@ The target shapes are derived directly from ``design/pv-data.jsx``:
 * ``profiles_list``  -> ``window.PROFILES`` (sidebar + inspector cards)
 * ``profile_detail`` -> ``{meta, thresholds, presets, profileMd}`` (InspectorView)
 * ``settings_view``  -> ``{cull, score, style, llm}`` (SettingsView)
+* ``llm_status_view`` -> local-LLM health for the UI badge
 * ``apply_payload``  -> ``{shoot, frames, bursts, bandCounts}``
   (window.SHOOT / ALL_SHOTS / BAND_COUNTS, ReviewView / ArbitrateView / ExportView)
 
@@ -207,6 +208,20 @@ def settings_view(settings: "Settings") -> dict[str, Any]:
         "score": settings.score.model_dump(mode="json"),
         "style": settings.style.model_dump(mode="json"),
         "llm": settings.llm.model_dump(mode="json"),
+    }
+
+
+def llm_status_view(status: Any, llm_settings: Any) -> dict[str, Any]:
+    """Build the LLM health payload consumed by the UI's LLM badge."""
+    return {
+        "ok": status.ok,
+        "reachable": status.reachable,
+        "model_present": status.model_present,
+        "backend": llm_settings.backend,
+        "host": llm_settings.host,
+        "model": llm_settings.model,
+        "models": list(status.models),
+        "detail": status.detail,
     }
 
 

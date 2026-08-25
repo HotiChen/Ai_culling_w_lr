@@ -68,6 +68,18 @@ def create_app(settings: Optional[Any] = None):
     def get_settings_view() -> Any:
         return mappers.settings_view(_settings())
 
+    @app.get("/api/llm")
+    def get_llm_status() -> Any:
+        """Local-LLM health — same check as ``photovault doctor``.
+
+        Never fails the request: an unreachable server or a missing model tag
+        is normal (culling falls back to pure CV) and is reported in the body.
+        """
+        from photovault.core.judge import GemmaJudge
+
+        cfg = _settings().llm
+        return mappers.llm_status_view(GemmaJudge(cfg).status(), cfg)
+
     @app.post("/api/learn")
     async def post_learn(request: Request) -> Any:
         from photovault.core.learn import learn_from_folder
