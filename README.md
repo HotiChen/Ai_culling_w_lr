@@ -43,7 +43,20 @@ ollama pull gemma4:12b
 # 覆寫預設（可選）
 export PHOTOVAULT_LLM__MODEL=gemma4:12b
 export PHOTOVAULT_LLM__HOST=http://localhost:11434
+
+# 確認 Ollama 有跑、而且真的抓了這個 tag
+photovault doctor
 ```
+
+`photovault doctor` 會列出目前 host 上**實際安裝**的模型；tag 打錯時直接告訴你
+要 `ollama pull` 什麼，而不是讓 `learn` 靜靜退回 placeholder `profile.md`：
+
+```
+  status  : unavailable — model 'gemma4:12b' is not available on http://localhost:11434.
+            Installed: gemma3:12b, llava:7b. Fix with: ollama pull gemma4:12b
+```
+
+（Web UI 有同一個檢查：`GET /api/llm`。）
 
 > 也可用 **llama.cpp**（OpenAI 相容 API）搭配 Gemma 4 12B QAT + MTP 加速本地部署 —— 見下方「llama.cpp 後端」。
 
@@ -59,6 +72,9 @@ photovault inspect --name 熱茶
 
 # 階段 B：對新照片資料夾評分
 photovault apply <新照片資料夾> --name 熱茶
+
+# 檢查本地 Gemma 是否就緒（host 通不通、model tag 在不在）
+photovault doctor
 
 # 開啟本地 Web UI（M5）
 photovault serve
@@ -91,7 +107,8 @@ photovault serve --host 0.0.0.0 --port 9000
 - **後端** `photovault/api/`：`create_app(settings=None)` 工廠（lazy import
   fastapi/uvicorn/Pillow，所以 `import photovault.core.*` 不需要這些套件）。
   端點 — `GET /api/profiles`、`GET /api/profiles/{name}`、`GET /api/settings`、
-  `POST /api/learn`、`POST /api/apply`、`GET /api/thumb`，並把 React SPA
+  `POST /api/learn`、`POST /api/apply`、`GET /api/thumb`、`GET /api/llm`
+  （本地 LLM 健檢，等同 `photovault doctor`），並把 React SPA
   以靜態檔掛載在 `/`。
 - **純 mappers** `photovault/api/mappers.py`：把 `LoadedProfile` / `Settings` /
   `ApplyReport` 轉成前端消費的 JSON 形狀（主要的 TDD 對象）。
@@ -111,5 +128,5 @@ photovault serve --host 0.0.0.0 --port 9000
 ## 測試
 
 ```bash
-pytest          # 161 tests，使用合成 .lrcat fixture，無需真實編目檔
+pytest          # 205 tests，使用合成 .lrcat fixture，無需真實編目檔
 ```

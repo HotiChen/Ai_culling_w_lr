@@ -313,3 +313,36 @@ def test_create_app_importable_without_calling():
 
     importlib.reload(appmod)
     assert hasattr(appmod, "create_app")
+
+
+# --------------------------------------------------------------------------- #
+# llm health — same check as `photovault doctor`, for the web UI
+# --------------------------------------------------------------------------- #
+def test_llm_status_endpoint(monkeypatch, settings: Settings):
+    from photovault.core.judge.ollama_client import LLMStatus
+
+    monkeypatch.setattr(
+        "photovault.core.judge.GemmaJudge.status",
+        lambda self: LLMStatus(True, False, ["gemma3:12b"], "not installed; ollama pull gemma4:12b"),
+    )
+    client = TestClient(create_app(settings=settings))
+    r = client.get("/api/llm")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["reachable"] is True
+    assert body["model"] == settings.llm.model
+    assert body["backend"] == settings.llm.backend
+    assert body["models"] == ["gemma3:12b"]
+    assert "ollama pull gemma4:12b" in body["detail"]
+
+
+def test_llm_status_endpoint_never_500s_when_server_down(settings: Settings):
+    # Real call against a closed port: must degrade to reachable=false, not raise.
+    settings = settings.model_copy(deep=True)
+    settings.llm.host = "http://127.0.0.1:1"
+    settings.llm.request_timeout_s = 1.0
+    client = TestClient(create_app(settings=settings))
+    r = client.get("/api/llm")
+    assert r.status_code == 200
+    assert r.json()["reachable"] is False
